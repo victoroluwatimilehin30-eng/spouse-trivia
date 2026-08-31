@@ -5,7 +5,6 @@ import { supabase } from '@/lib/supabase';
 import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
-// Seeded shuffle function to randomize question order per room code without altering categories
 function getShuffledQuestions(questionsArray: any[], roomCode: string) {
   if (!roomCode || questionsArray.length === 0) return questionsArray;
   
@@ -214,11 +213,18 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       .eq('room_code', roomCodeUpper);
   };
 
-  const handleEndGameAttempt = () => {
+  const handleEndGameAttempt = async () => {
     if (teamsPlayed.length < couples.length) {
       alert(`Cannot end match yet! Only ${teamsPlayed.length} out of ${couples.length} teams have played this round. Every team must take a turn before declaring a winner.`);
       return;
     }
+
+    // Safely broadcast game over via selected_category
+    await supabase
+      .from('rooms')
+      .update({ selected_category: 'GAME_OVER' })
+      .eq('room_code', roomCodeUpper);
+
     router.push(`/winner/${roomCodeUpper}`);
   };
 

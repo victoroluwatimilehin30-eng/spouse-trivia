@@ -2,9 +2,9 @@
 
 import { useState, useEffect, use, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useRouter } from 'next/navigation';
 import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye } from 'lucide-react';
 
-// Seeded shuffle function to randomize question order per room code without altering categories
 function getShuffledQuestions(questionsArray: any[], roomCode: string) {
   if (!roomCode || questionsArray.length === 0) return questionsArray;
   
@@ -29,6 +29,7 @@ function getShuffledQuestions(questionsArray: any[], roomCode: string) {
 
 export default function PlayerInput({ params }: { params: Promise<{ roomCode: string }> }) {
   const resolvedParams = use(params);
+  const router = useRouter();
   const roomCodeUpper = resolvedParams?.roomCode ? resolvedParams.roomCode.toUpperCase() : '';
 
   const [couples, setCouples] = useState<any[]>([]);
@@ -77,6 +78,12 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           return;
         }
 
+        // If game has already ended, redirect immediately
+        if (room.selected_category === 'GAME_OVER') {
+          router.push(`/winner/${roomCodeUpper}`);
+          return;
+        }
+
         if (room.selected_category) setSelectedCategories(room.selected_category.split(','));
         if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
         if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
@@ -108,7 +115,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
     initRoom();
 
-    // Fast Polling fallback for room, couples scores, and submissions sync
+    // Fast Polling fallback for room updates & game end check
     pollInterval = setInterval(async () => {
       try {
         const { data: room } = await supabase
@@ -118,6 +125,11 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           .maybeSingle();
 
         if (room) {
+          if (room.selected_category === 'GAME_OVER') {
+            router.push(`/winner/${roomCodeUpper}`);
+            return;
+          }
+
           if (room.selected_category) setSelectedCategories(room.selected_category.split(','));
           if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
           if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
@@ -163,13 +175,19 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       }
     }, 1000);
 
-    // Realtime channel for room changes
+    // Realtime channel for room changes & game end detection
     channel = supabase
       .channel(`player_room_sync_${roomCodeUpper}`)
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `room_code=eq.${roomCodeUpper}` },
         async (payload) => {
+          const updatedCat = payload.new.selected_category;
+          if (updatedCat === 'GAME_OVER') {
+            router.push(`/winner/${roomCodeUpper}`);
+            return;
+          }
+
           const qId = payload.new.current_question_id;
           if (qId) {
             const { data: newQ } = await supabase
@@ -201,7 +219,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       )
       .subscribe();
 
-    // Realtime channel for live couple score updates
     couplesChannel = supabase
       .channel(`player_couples_sync_${roomCodeUpper}`)
       .on(
@@ -224,14 +241,13 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       if (channel) supabase.removeChannel(channel);
       if (couplesChannel) supabase.removeChannel(couplesChannel);
     };
-  }, [roomCodeUpper, selectedCoupleId, spouseType]);
+  }, [roomCodeUpper, selectedCoupleId, spouseType, router]);
 
   const filteredQuestions = useMemo(() => {
     let base = selectedCategories.includes('All')
       ? questions
       : questions.filter((q) => selectedCategories.includes(q.category));
     
-    // Shuffle question order deterministically based on the room code
     return getShuffledQuestions(base, roomCodeUpper);
   }, [questions, selectedCategories, roomCodeUpper]);
 
@@ -309,7 +325,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     );
   }
 
-  // STEP 1: Select Team & Role
   if (!spouseType || !selectedCoupleId) {
     return (
       <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-6 font-sans">
@@ -370,7 +385,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     );
   }
 
-  // Shared Live Scoreboard component for player screens
   const renderLiveScoreboard = () => (
     <div className="bg-[#0F0E0C] border border-[#26231E] rounded-xl p-3.5 space-y-2 mt-4 text-left">
       <div className="flex items-center justify-between border-b border-[#26231E] pb-2">
@@ -396,7 +410,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     </div>
   );
 
-  // STEP 2: Turn Isolation (Waiting Screen)
   if (!isMyTurn) {
     return (
       <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-4 font-sans">
@@ -420,7 +433,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     );
   }
 
-  // STEP 3: Active Turn Screen
   return (
     <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-4 font-sans">
       <div className="bg-[#161412] border border-[#26231E] rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl">
