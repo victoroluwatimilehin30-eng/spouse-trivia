@@ -54,8 +54,8 @@ function SetupForm() {
       const couplesToInsert = couples.map((c) => ({
         room_id: roomData.id,
         team_name: c.team_name || 'Couple',
-        husband_name: c.husband_name || 'Partner 1',
-        wife_name: c.wife_name || 'Partner 2',
+        husband_name: c.husband_name || 'Husband',
+        wife_name: c.wife_name || 'Wife',
         total_score: 0,
       }));
 
@@ -113,7 +113,7 @@ function SetupForm() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-[10px] uppercase font-mono tracking-wider text-[#9E978E] mb-1">
-                      Partner 1 Name
+                      Husband's Name
                     </label>
                     <input
                       type="text"
@@ -126,7 +126,7 @@ function SetupForm() {
                   </div>
                   <div>
                     <label className="block text-[10px] uppercase font-mono tracking-wider text-[#9E978E] mb-1">
-                      Partner 2 Name
+                      Wife's Name
                     </label>
                     <input
                       type="text"
