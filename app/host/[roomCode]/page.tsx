@@ -115,8 +115,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     fetchGameData();
 
-    // Removed the conflicting 2-second polling interval to prevent state flickering/reverting
-
     const channel = supabase
       .channel(`host_room_${roomCodeUpper}`)
       .on(
@@ -128,7 +126,11 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           } else {
             const sub = payload.new as any;
             if (sub && sub.couple_id) {
-              setSubmissionsMap((prev) => ({ ...prev, [sub.couple_id]: sub }));
+              // Safely merge incoming payload fields with existing state to prevent data loss
+              setSubmissionsMap((prev) => {
+                const existing = prev[sub.couple_id] || {};
+                return { ...prev, [sub.couple_id]: { ...existing, ...sub } };
+              });
             }
           }
         }
