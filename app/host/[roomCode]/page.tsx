@@ -115,7 +115,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     fetchGameData();
 
-    const interval = setInterval(fetchSubmissions, 2000);
+    // Removed the conflicting 2-second polling interval to prevent state flickering/reverting
 
     const channel = supabase
       .channel(`host_room_${roomCodeUpper}`)
@@ -166,7 +166,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       .subscribe();
 
     return () => {
-      clearInterval(interval);
       supabase.removeChannel(channel);
     };
   }, [roomCodeUpper, fetchSubmissions, couples.length]);
@@ -219,7 +218,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       return;
     }
 
-    // Safely broadcast game over via selected_category
     await supabase
       .from('rooms')
       .update({ selected_category: 'GAME_OVER' })
