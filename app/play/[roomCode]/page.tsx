@@ -33,8 +33,21 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
   const roomCodeUpper = resolvedParams?.roomCode ? resolvedParams.roomCode.toUpperCase() : '';
 
   const [couples, setCouples] = useState<any[]>([]);
-  const [selectedCoupleId, setSelectedCoupleId] = useState<string>('');
-  const [spouseType, setSpouseType] = useState<'wife' | 'husband' | null>(null);
+  
+  // Initialize state from localStorage if available so refreshing keeps them on the active page
+  const [selectedCoupleId, setSelectedCoupleId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(`player_couple_${roomCodeUpper}`) || '';
+    }
+    return '';
+  });
+
+  const [spouseType, setSpouseType] = useState<'wife' | 'husband' | null>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem(`player_spouse_${roomCodeUpper}`) as 'wife' | 'husband') || null;
+    }
+    return null;
+  });
 
   const [questions, setQuestions] = useState<any[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
@@ -47,6 +60,14 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
   const [isRevealed, setIsRevealed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [roomError, setRoomError] = useState(false);
+
+  // Save selection to localStorage when set
+  const handleSelectTeamAndRole = (coupleId: string, type: 'wife' | 'husband') => {
+    setSelectedCoupleId(coupleId);
+    setSpouseType(type);
+    localStorage.setItem(`player_couple_${roomCodeUpper}`, coupleId);
+    localStorage.setItem(`player_spouse_${roomCodeUpper}`, type);
+  };
 
   useEffect(() => {
     if (!roomCodeUpper) return;
@@ -78,7 +99,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           return;
         }
 
-        // If game has already ended, redirect immediately
         if (room.selected_category === 'GAME_OVER') {
           router.push(`/winner/${roomCodeUpper}`);
           return;
@@ -115,7 +135,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
     initRoom();
 
-    // Fast Polling fallback for room updates & game end check
     pollInterval = setInterval(async () => {
       try {
         const { data: room } = await supabase
@@ -155,16 +174,19 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           if (couplesData) setCouples(couplesData);
         }
 
-        if (selectedCoupleId && spouseType) {
+        const currentCoupleId = localStorage.getItem(`player_couple_${roomCodeUpper}`);
+        const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
+
+        if (currentCoupleId && currentSpouse) {
           const { data: sub } = await supabase
             .from('submissions')
             .select('*')
             .eq('room_code', roomCodeUpper)
-            .eq('couple_id', selectedCoupleId)
+            .eq('couple_id', currentCoupleId)
             .maybeSingle();
 
           if (sub) {
-            const maskField = spouseType === 'wife' ? 'wife_unmasked' : 'husband_unmasked';
+            const maskField = currentSpouse === 'wife' ? 'wife_unmasked' : 'husband_unmasked';
             if (sub[maskField] !== undefined) {
               setIsRevealed(sub[maskField]);
             }
@@ -175,7 +197,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       }
     }, 1000);
 
-    // Realtime channel for room changes & game end detection
     channel = supabase
       .channel(`player_room_sync_${roomCodeUpper}`)
       .on(
@@ -241,7 +262,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       if (channel) supabase.removeChannel(channel);
       if (couplesChannel) supabase.removeChannel(couplesChannel);
     };
-  }, [roomCodeUpper, selectedCoupleId, spouseType, router]);
+  }, [roomCodeUpper, router]);
 
   const filteredQuestions = useMemo(() => {
     let base = selectedCategories.includes('All')
@@ -325,6 +346,10 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     );
   }
 
+  // Temporary local state just for the setup prompt before saving to localStorage
+  const [tempCoupleId, setTempCoupleId] = useState('');
+  const [tempSpouseType, setTempSpouseType] = useState<'wife' | 'husband' | null>(null);
+
   if (!spouseType || !selectedCoupleId) {
     return (
       <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-6 font-sans">
@@ -343,8 +368,8 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
                 1. Select Team
               </label>
               <select
-                value={selectedCoupleId}
-                onChange={(e) => setSelectedCoupleId(e.target.value)}
+                value={tempCoupleId}
+                onChange={(e) => setTempCoupleId(e.target.value)}
                 className="w-full bg-[#0F0E0C] border border-[#26231E] text-xs text-[#F3EFE6] rounded-xl p-3 focus:outline-none"
               >
                 <option value="">-- Choose Couple --</option>
@@ -356,27 +381,41 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
               </select>
             </div>
 
-            {selectedCoupleId && (
+            {tempCoupleId && (
               <div>
                 <label className="block text-[11px] uppercase tracking-wider text-[#9E978E] mb-2">
                   2. Who is holding this device?
                 </label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2 mb-4">
                   <button
                     type="button"
-                    onClick={() => setSpouseType('wife')}
-                    className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#F3EFE6] py-3 rounded-xl font-medium text-xs transition-all"
+                    onClick={() => setTempSpouseType('wife')}
+                    className={`py-3 rounded-xl font-medium text-xs border transition-all ${
+                      tempSpouseType === 'wife' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#1C1A17] text-[#F3EFE6] border-[#302B25]'
+                    }`}
                   >
                     Wife
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSpouseType('husband')}
-                    className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#F3EFE6] py-3 rounded-xl font-medium text-xs transition-all"
+                    onClick={() => setTempSpouseType('husband')}
+                    className={`py-3 rounded-xl font-medium text-xs border transition-all ${
+                      tempSpouseType === 'husband' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#1C1A17] text-[#F3EFE6] border-[#302B25]'
+                    }`}
                   >
                     Husband
                   </button>
                 </div>
+
+                {tempSpouseType && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectTeamAndRole(tempCoupleId, tempSpouseType)}
+                    className="w-full bg-[#F3EFE6] text-[#0F0E0C] font-semibold py-3 rounded-xl text-xs transition-all"
+                  >
+                    Enter Game Room
+                  </button>
+                )}
               </div>
             )}
           </div>
