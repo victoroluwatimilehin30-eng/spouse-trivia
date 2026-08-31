@@ -34,7 +34,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
   const [couples, setCouples] = useState<any[]>([]);
   
-  // Initialize state from localStorage if available so refreshing keeps them on the active page
   const [selectedCoupleId, setSelectedCoupleId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem(`player_couple_${roomCodeUpper}`) || '';
@@ -49,6 +48,10 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     return null;
   });
 
+  // All hooks must be declared at the top level before any conditional returns
+  const [tempCoupleId, setTempCoupleId] = useState('');
+  const [tempSpouseType, setTempSpouseType] = useState<'wife' | 'husband' | null>(null);
+
   const [questions, setQuestions] = useState<any[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
   const [currentQuestion, setCurrentQuestion] = useState<any | null>(null);
@@ -61,7 +64,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
   const [loading, setLoading] = useState(true);
   const [roomError, setRoomError] = useState(false);
 
-  // Save selection to localStorage when set
   const handleSelectTeamAndRole = (coupleId: string, type: 'wife' | 'husband') => {
     setSelectedCoupleId(coupleId);
     setSpouseType(type);
@@ -345,10 +347,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       </div>
     );
   }
-
-  // Temporary local state just for the setup prompt before saving to localStorage
-  const [tempCoupleId, setTempCoupleId] = useState('');
-  const [tempSpouseType, setTempSpouseType] = useState<'wife' | 'husband' | null>(null);
 
   if (!spouseType || !selectedCoupleId) {
     return (
