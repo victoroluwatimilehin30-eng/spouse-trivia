@@ -128,14 +128,12 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .select('*')
         .order('id', { ascending: true });
 
-      if (qData && qData.length > 0) {
-        setQuestions(qData);
-        if (room?.current_question_id) {
-          const activeQ = qData.find((q) => Number(q.id) === Number(room.current_question_id));
-          if (activeQ) setCurrentQuestion(activeQ);
-        }
-      } else {
-        setQuestions(FALLBACK_QUESTIONS);
+      const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
+      setQuestions(activeList);
+
+      if (room?.current_question_id) {
+        const activeQ = activeList.find((q) => Number(q.id) === Number(room.current_question_id));
+        if (activeQ) setCurrentQuestion(activeQ);
       }
 
       await fetchSubmissions(activeRoundNum);
@@ -143,8 +141,41 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     fetchGameData();
 
-    const pollInterval = setInterval(() => {
-      fetchSubmissions(currentRoundRef.current);
+    // Robust 1-second polling sync for both submissions and room state (question picks)
+    const pollInterval = setInterval(async () => {
+      await fetchSubmissions(currentRoundRef.current);
+
+      const { data: room } = await supabase
+        .from('rooms')
+        .select('*')
+        .eq('room_code', roomCodeUpper)
+        .maybeSingle();
+
+      if (room) {
+        if (room.current_round && room.current_round !== currentRoundRef.current) {
+          setCurrentRound(room.current_round);
+          setSubmissionsMap({});
+        }
+
+        if (room.current_question_id) {
+          const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
+          const foundQ = activePool.find((q) => Number(q.id) === Number(room.current_question_id));
+          if (foundQ) setCurrentQuestion(foundQ);
+        } else {
+          setCurrentQuestion(null);
+        }
+
+        if (room.used_question_ids) {
+          setUsedQuestionIds(room.used_question_ids);
+        }
+
+        if (room.active_couple_id && couples.length > 0) {
+          const foundCouple = couples.find((c) => c.id === room.active_couple_id);
+          if (foundCouple) {
+            setActiveCouple(foundCouple);
+          }
+        }
+      }
     }, 1000);
 
     const channel = supabase
@@ -203,7 +234,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
-  }, [roomCodeUpper, fetchSubmissions, couples.length, questions]);
+  }, [roomCodeUpper, fetchSubmissions, couples, questions]);
 
   const playerLink = typeof window !== 'undefined' ? `${window.location.origin}/play/${roomCodeUpper}` : '';
 
