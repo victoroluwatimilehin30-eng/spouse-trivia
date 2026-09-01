@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 function getShuffledQuestions(questionsArray: any[], roomCode: string) {
@@ -41,6 +41,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const [usedQuestionIds, setUsedQuestionIds] = useState<number[]>([]);
   const [submissionsMap, setSubmissionsMap] = useState<Record<string, any>>({});
   const [teamsPlayed, setTeamsPlayed] = useState<string[]>([]);
+  const [copied, setCopied] = useState(false);
 
   const fetchSubmissions = useCallback(async () => {
     if (!roomCodeUpper) return;
@@ -126,7 +127,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           } else {
             const sub = payload.new as any;
             if (sub && sub.couple_id) {
-              // Safely merge incoming payload fields with existing state to prevent data loss
               setSubmissionsMap((prev) => {
                 const existing = prev[sub.couple_id] || {};
                 return { ...prev, [sub.couple_id]: { ...existing, ...sub } };
@@ -171,6 +171,13 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       supabase.removeChannel(channel);
     };
   }, [roomCodeUpper, fetchSubmissions, couples.length]);
+
+  const handleCopyPlayerLink = () => {
+    const playerLink = `${window.location.origin}/play/${roomCodeUpper}`;
+    navigator.clipboard.writeText(playerLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const handleSelectActiveCouple = async (couple: any) => {
     setActiveCouple(couple);
@@ -302,16 +309,25 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   return (
     <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] p-6 lg:p-10 font-sans grid grid-cols-1 lg:grid-cols-4 gap-6">
       <div className="lg:col-span-3 flex flex-col gap-6">
-        <div className="flex justify-between items-center bg-[#161412] border border-[#26231E] p-5 rounded-2xl">
+        <div className="flex flex-wrap justify-between items-center bg-[#161412] border border-[#26231E] p-5 gap-4 rounded-2xl">
           <div className="flex items-center gap-4">
             <div className="w-2.5 h-2.5 rounded-full bg-[#D4C3A3]" />
             <div>
               <span className="text-[11px] uppercase tracking-widest text-[#9E978E] font-medium block">
-                In Sync Room
+                Room Code & Player Link
               </span>
-              <h1 className="text-xl font-mono tracking-wider font-semibold text-[#F3EFE6]">
-                {roomCodeUpper}
-              </h1>
+              <div className="flex items-center gap-3 mt-0.5">
+                <h1 className="text-xl font-mono tracking-wider font-semibold text-[#F3EFE6]">
+                  {roomCodeUpper}
+                </h1>
+                <button
+                  onClick={handleCopyPlayerLink}
+                  className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
+                >
+                  {copied ? <Check className="w-3.5 h-3.5 text-[#86EFAC]" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? 'Link Copied!' : 'Copy Player Link'}
+                </button>
+              </div>
             </div>
           </div>
           <button
