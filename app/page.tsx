@@ -2,8 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
-import { Sparkles, Users, ArrowRight, Plus, Minus, KeyRound, Play } from 'lucide-react';
+import { ArrowRight, Plus, Minus, KeyRound, Play, Sparkles } from 'lucide-react';
 
 const CATEGORIES = [
   'Favorites',
@@ -64,10 +63,10 @@ export default function Home() {
     <main className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex flex-col items-center justify-center p-6 font-sans selection:bg-[#D4C3A3] selection:text-[#0F0E0C]">
       <div className="w-full max-w-md space-y-8 text-center">
         
-        {/* Top Tag */}
+        {/* Branding */}
         <div className="space-y-2">
           <span className="text-[10px] font-mono tracking-widest uppercase text-[#9E978E] bg-[#161412] border border-[#26231E] px-3 py-1 rounded-full">
-            ● In Sync &nbsp;&nbsp; v1.0
+            ● In Sync &nbsp;&nbsp; Couple Trivia
           </span>
           <h1 className="text-4xl sm:text-5xl font-serif font-normal tracking-tight text-[#F3EFE6] pt-2">
             In Sync
@@ -105,11 +104,13 @@ export default function Home() {
         {mode === 'host' && (
           <div className="bg-[#161412] border border-[#26231E] p-6 sm:p-8 rounded-3xl space-y-6 shadow-2xl text-left">
             <div className="text-center space-y-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-[#6B645B]">Setup Session</span>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-[#6B645B]">
+                Setup Session
+              </span>
               <h2 className="text-base font-serif text-[#F3EFE6]">Game Configuration</h2>
             </div>
 
-            {/* Categories */}
+            {/* Category Filter Selection */}
             <div className="space-y-3">
               <div className="flex justify-between items-center text-[10px] uppercase font-mono tracking-wider text-[#9E978E]">
                 <span>Select Categories (Max 7)</span>
@@ -118,14 +119,14 @@ export default function Home() {
                     onClick={() => setSelectedCategories(['All'])}
                     className="hover:text-[#F3EFE6] underline"
                   >
-                    All Selected
+                    Select All
                   </button>
                   <span>•</span>
                   <button
                     onClick={() => setSelectedCategories(['Favorites'])}
                     className="hover:text-[#F3EFE6] underline"
                   >
-                    Clear Selection
+                    Reset
                   </button>
                 </div>
               </div>
@@ -162,23 +163,27 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Couple Count */}
+            {/* Couple Counter */}
             <div className="space-y-3 pt-2 border-t border-[#26231E]">
               <span className="block text-center text-[10px] uppercase font-mono tracking-wider text-[#9E978E]">
                 How many couples are playing?
               </span>
               <div className="flex items-center justify-center gap-4">
                 <button
-                  onClick={() => setCoupleCount((c) => Math.max(1, c - 1))}
+                  type="button"
+                  onClick={() => setCoupleCount((c) => Math.max(2, c - 1))}
                   className="w-10 h-10 rounded-full bg-[#0F0E0C] border border-[#26231E] flex items-center justify-center text-[#9E978E] hover:text-[#F3EFE6] hover:border-[#38332C] transition-all"
                 >
                   <Minus className="w-4 h-4" />
                 </button>
                 <div className="text-center font-mono">
                   <span className="text-xl font-bold text-[#F3EFE6]">{coupleCount}</span>
-                  <span className="block text-[9px] uppercase tracking-wider text-[#6B645B]">Couples</span>
+                  <span className="block text-[9px] uppercase tracking-wider text-[#6B645B]">
+                    Couples
+                  </span>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setCoupleCount((c) => Math.min(10, c + 1))}
                   className="w-10 h-10 rounded-full bg-[#0F0E0C] border border-[#26231E] flex items-center justify-center text-[#9E978E] hover:text-[#F3EFE6] hover:border-[#38332C] transition-all"
                 >
@@ -198,9 +203,14 @@ export default function Home() {
 
         {/* JOIN MODE */}
         {mode === 'join' && (
-          <form onSubmit={handleJoinRoom} className="bg-[#161412] border border-[#26231E] p-8 rounded-3xl space-y-6 shadow-2xl text-left">
+          <form
+            onSubmit={handleJoinRoom}
+            className="bg-[#161412] border border-[#26231E] p-8 rounded-3xl space-y-6 shadow-2xl text-left"
+          >
             <div className="text-center space-y-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-[#6B645B]">Player Entry</span>
+              <span className="text-[10px] font-mono uppercase tracking-widest text-[#6B645B]">
+                Player Entry
+              </span>
               <h2 className="text-base font-serif text-[#F3EFE6]">Enter Room Code</h2>
             </div>
 
@@ -214,7 +224,7 @@ export default function Home() {
                   type="text"
                   value={joinCode}
                   onChange={(e) => setJoinCode(e.target.value)}
-                  placeholder="e.g. INSYNC2026"
+                  placeholder="e.g. 4OQ4PU"
                   className="w-full bg-[#0F0E0C] border border-[#26231E] rounded-xl py-3 pl-10 pr-4 text-xs font-mono tracking-wider text-[#F3EFE6] uppercase placeholder:text-[#38332C] focus:outline-none focus:border-[#D4C3A3]"
                   required
                 />

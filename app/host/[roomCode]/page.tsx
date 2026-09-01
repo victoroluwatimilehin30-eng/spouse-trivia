@@ -44,7 +44,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const [currentQuestion, setCurrentQuestion] = useState<any | null>(null);
   const [usedQuestionIds, setUsedQuestionIds] = useState<number[]>([]);
   const [submissionsMap, setSubmissionsMap] = useState<Record<string, any>>({});
-  const [teamsPlayedThisRound, setTeamsPlayedThisRound] = useState<string[]>([]);
   
   const [copied, setCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
@@ -59,16 +58,12 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     if (subData) {
       const map: Record<string, any> = {};
-      const playedIds: string[] = [];
       subData.forEach((sub) => {
         if (sub.couple_id) {
           map[sub.couple_id] = sub;
-          playedIds.push(sub.couple_id);
         }
       });
       setSubmissionsMap(map);
-      // Automatically reconstruct played teams for the active round on refresh or fetch
-      setTeamsPlayedThisRound((prev) => Array.from(new Set([...prev, ...playedIds])));
     } else {
       setSubmissionsMap({});
     }
@@ -133,9 +128,10 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     fetchGameData();
 
+    // Fast 1-second polling to guarantee instant UI updates without manual refresh
     const pollInterval = setInterval(() => {
       fetchSubmissions(currentRoundRef.current);
-    }, 2000);
+    }, 1000);
 
     const channel = supabase
       .channel(`host_room_${roomCodeUpper}`)
@@ -152,9 +148,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
                 ...prev,
                 [sub.couple_id]: { ...(prev[sub.couple_id] || {}), ...sub },
               }));
-              setTeamsPlayedThisRound((prev) =>
-                prev.includes(sub.couple_id) ? prev : [...prev, sub.couple_id]
-              );
             }
           }
         }
@@ -165,7 +158,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         async (payload) => {
           if (payload.new.current_round && payload.new.current_round !== currentRoundRef.current) {
             setCurrentRound(payload.new.current_round);
-            setTeamsPlayedThisRound([]);
             setSubmissionsMap({});
             await fetchSubmissions(payload.new.current_round);
           }
@@ -234,10 +226,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const handleNextTeam = async () => {
     if (!canProceedToNextTeam || couples.length === 0) return;
 
-    if (!teamsPlayedThisRound.includes(activeCouple?.id)) {
-      setTeamsPlayedThisRound((prev) => [...prev, activeCouple.id]);
-    }
-
     const currentIndex = couples.findIndex((c) => c.id === activeCouple?.id);
     const nextIndex = (currentIndex + 1) % couples.length;
     const nextCouple = couples[nextIndex];
@@ -254,12 +242,19 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       .eq('room_code', roomCodeUpper);
   };
 
-  const isRoundComplete = couples.length > 0 && teamsPlayedThisRound.length >= couples.length;
+  // Universal Round Completion Check: counts how many couples have active answers submitted for this round
+  const completedTeamsCount = useMemo(() => {
+    return couples.filter((c) => {
+      const sub = submissionsMap[c.id];
+      return sub && (sub.wife_answer || sub.husband_answer);
+    }).length;
+  }, [couples, submissionsMap]);
+
+  const isRoundComplete = couples.length > 0 && completedTeamsCount >= couples.length;
 
   const handleAdvanceRound = async () => {
     const nextRound = currentRound + 1;
     setCurrentRound(nextRound);
-    setTeamsPlayedThisRound([]);
     setSubmissionsMap({});
     setCurrentQuestion(null);
 
@@ -462,7 +457,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             <UserCheck className="w-4 h-4 text-[#D4C3A3]" />
             <div>
               <span className="text-[10px] text-[#9E978E] uppercase tracking-wider font-medium block">
-                Round {currentRound} Status ({teamsPlayedThisRound.length}/{couples.length} Teams Answered):
+                Round {currentRound} Status ({completedTeamsCount}/{couples.length} Teams Answered):
               </span>
               <span className="text-sm font-serif font-bold text-[#D4C3A3]">
                 Active: {activeCouple?.team_name} ({activeCouple?.husband_name} & {activeCouple?.wife_name})
@@ -659,7 +654,8 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           <div className="space-y-2.5">
             {couples.map((couple, index) => {
               const isSelected = activeCouple?.id === couple.id;
-              const hasAnsweredThisRound = teamsPlayedThisRound.includes(couple.id);
+              const sub = submissionsMap[couple.id];
+              const hasAnsweredThisRound = sub && (sub.wife_answer || sub.husband_answer);
 
               return (
                 <div
