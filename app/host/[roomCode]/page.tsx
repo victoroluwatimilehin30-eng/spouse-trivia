@@ -5,6 +5,19 @@ import { supabase } from '@/lib/supabase';
 import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
+const FALLBACK_QUESTIONS = [
+  { id: 1, category: 'Habits', question_text: 'What is your spouse absolute favorite comfort food?' },
+  { id: 2, category: 'Habits', question_text: 'What is your spouse biggest house pet peeve?' },
+  { id: 3, category: 'Habits', question_text: 'What side of the bed does your spouse sleep on?' },
+  { id: 4, category: 'Habits', question_text: 'What is the very first thing your spouse does after waking up?' },
+  { id: 5, category: 'Favorites', question_text: 'What is your spouse favorite restaurant of all time?' },
+  { id: 6, category: 'Favorites', question_text: 'What is your spouse favorite movie they can rewatch endlessly?' },
+  { id: 7, category: 'Memories', question_text: 'Where was your very first official date?' },
+  { id: 8, category: 'Memories', question_text: 'What was the first gift your spouse ever bought for you?' },
+  { id: 9, category: 'Romance', question_text: 'Who said "I love you" first, and where were you?' },
+  { id: 10, category: 'Romance', question_text: 'Who made the first move when you started dating?' }
+];
+
 function getShuffledQuestions(questionsArray: any[], roomCode: string) {
   if (!roomCode || questionsArray.length === 0) return questionsArray;
   
@@ -115,12 +128,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .select('*')
         .order('id', { ascending: true });
 
-      if (qData) {
+      if (qData && qData.length > 0) {
         setQuestions(qData);
         if (room?.current_question_id) {
           const activeQ = qData.find((q) => Number(q.id) === Number(room.current_question_id));
           if (activeQ) setCurrentQuestion(activeQ);
         }
+      } else {
+        setQuestions(FALLBACK_QUESTIONS);
       }
 
       await fetchSubmissions(activeRoundNum);
@@ -128,7 +143,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     fetchGameData();
 
-    // Fast 1-second polling to guarantee instant UI updates without manual refresh
     const pollInterval = setInterval(() => {
       fetchSubmissions(currentRoundRef.current);
     }, 1000);
@@ -164,12 +178,8 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
           const qId = payload.new.current_question_id;
           if (qId) {
-            const { data: newQ } = await supabase
-              .from('questions')
-              .select('*')
-              .eq('id', qId)
-              .maybeSingle();
-
+            const activeList = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
+            const newQ = activeList.find((q) => Number(q.id) === Number(qId));
             if (newQ) setCurrentQuestion(newQ);
           } else {
             setCurrentQuestion(null);
@@ -193,7 +203,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
-  }, [roomCodeUpper, fetchSubmissions, couples.length]);
+  }, [roomCodeUpper, fetchSubmissions, couples.length, questions]);
 
   const playerLink = typeof window !== 'undefined' ? `${window.location.origin}/play/${roomCodeUpper}` : '';
 
@@ -242,7 +252,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       .eq('room_code', roomCodeUpper);
   };
 
-  // Universal Round Completion Check: counts how many couples have active answers submitted for this round
   const completedTeamsCount = useMemo(() => {
     return couples.filter((c) => {
       const sub = submissionsMap[c.id];
@@ -277,17 +286,17 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   };
 
   const filteredQuestions = useMemo(() => {
-    if (!questions || questions.length === 0) return [];
+    const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
 
     if (selectedCategories.includes('All') || selectedCategories.length === 0) {
-      return getShuffledQuestions(questions, roomCodeUpper);
+      return getShuffledQuestions(activePool, roomCodeUpper);
     }
 
-    const matched = questions.filter((q) => 
+    const matched = activePool.filter((q) => 
       selectedCategories.some(cat => q.category?.trim().toLowerCase() === cat.trim().toLowerCase())
     );
 
-    const baseToUse = matched.length > 0 ? matched : questions;
+    const baseToUse = matched.length > 0 ? matched : activePool;
     return getShuffledQuestions(baseToUse, roomCodeUpper);
   }, [questions, selectedCategories, roomCodeUpper]);
 

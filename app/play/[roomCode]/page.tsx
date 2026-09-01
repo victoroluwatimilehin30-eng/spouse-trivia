@@ -5,6 +5,19 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye, Layers } from 'lucide-react';
 
+const FALLBACK_QUESTIONS = [
+  { id: 1, category: 'Habits', question_text: 'What is your spouse absolute favorite comfort food?' },
+  { id: 2, category: 'Habits', question_text: 'What is your spouse biggest house pet peeve?' },
+  { id: 3, category: 'Habits', question_text: 'What side of the bed does your spouse sleep on?' },
+  { id: 4, category: 'Habits', question_text: 'What is the very first thing your spouse does after waking up?' },
+  { id: 5, category: 'Favorites', question_text: 'What is your spouse favorite restaurant of all time?' },
+  { id: 6, category: 'Favorites', question_text: 'What is your spouse favorite movie they can rewatch endlessly?' },
+  { id: 7, category: 'Memories', question_text: 'Where was your very first official date?' },
+  { id: 8, category: 'Memories', question_text: 'What was the first gift your spouse ever bought for you?' },
+  { id: 9, category: 'Romance', question_text: 'Who said "I love you" first, and where were you?' },
+  { id: 10, category: 'Romance', question_text: 'Who made the first move when you started dating?' }
+];
+
 function getShuffledQuestions(questionsArray: any[], roomCode: string) {
   if (!roomCode || questionsArray.length === 0) return questionsArray;
   
@@ -87,7 +100,11 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           .select('*')
           .order('id', { ascending: true });
 
-        if (qData) setQuestions(qData);
+        if (qData && qData.length > 0) {
+          setQuestions(qData);
+        } else {
+          setQuestions(FALLBACK_QUESTIONS);
+        }
 
         const { data: room, error: roomErr } = await supabase
           .from('rooms')
@@ -111,8 +128,9 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
         if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
 
-        if (room.current_question_id && qData) {
-          const found = qData.find((q) => Number(q.id) === Number(room.current_question_id));
+        if (room.current_question_id) {
+          const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
+          const found = activeList.find((q) => Number(q.id) === Number(room.current_question_id));
           if (found) setCurrentQuestion(found);
         }
 
@@ -164,12 +182,8 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
 
           if (room.current_question_id) {
-            const { data: q } = await supabase
-              .from('questions')
-              .select('*')
-              .eq('id', room.current_question_id)
-              .maybeSingle();
-
+            const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
+            const q = activePool.find(item => Number(item.id) === Number(room.current_question_id));
             if (q) setCurrentQuestion(q);
           } else {
             setCurrentQuestion(null);
@@ -229,11 +243,8 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
           const qId = payload.new.current_question_id;
           if (qId) {
-            const { data: newQ } = await supabase
-              .from('questions')
-              .select('*')
-              .eq('id', qId)
-              .maybeSingle();
+            const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
+            const newQ = activePool.find(item => Number(item.id) === Number(qId));
 
             if (newQ) {
               setCurrentQuestion(newQ);
@@ -280,20 +291,20 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       if (channel) supabase.removeChannel(channel);
       if (couplesChannel) supabase.removeChannel(couplesChannel);
     };
-  }, [roomCodeUpper, router, currentRound]);
+  }, [roomCodeUpper, router, currentRound, questions]);
 
   const filteredQuestions = useMemo(() => {
-    if (!questions || questions.length === 0) return [];
+    const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
 
     if (selectedCategories.includes('All') || selectedCategories.length === 0) {
-      return getShuffledQuestions(questions, roomCodeUpper);
+      return getShuffledQuestions(activePool, roomCodeUpper);
     }
 
-    const matched = questions.filter((q) => 
+    const matched = activePool.filter((q) => 
       selectedCategories.some(cat => q.category?.trim().toLowerCase() === cat.trim().toLowerCase())
     );
 
-    const baseToUse = matched.length > 0 ? matched : questions;
+    const baseToUse = matched.length > 0 ? matched : activePool;
     return getShuffledQuestions(baseToUse, roomCodeUpper);
   }, [questions, selectedCategories, roomCodeUpper]);
 
