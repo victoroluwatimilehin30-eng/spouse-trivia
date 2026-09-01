@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, use, useMemo, useCallback } from 'react';
+import { useState, useEffect, use, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 function getShuffledQuestions(questionsArray: any[], roomCode: string) {
@@ -37,26 +37,38 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const [questions, setQuestions] = useState<any[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
   
+  const [currentRound, setCurrentRound] = useState<number>(1);
+  const currentRoundRef = useRef<number>(1);
+  currentRoundRef.current = currentRound;
+
   const [currentQuestion, setCurrentQuestion] = useState<any | null>(null);
   const [usedQuestionIds, setUsedQuestionIds] = useState<number[]>([]);
   const [submissionsMap, setSubmissionsMap] = useState<Record<string, any>>({});
-  const [teamsPlayed, setTeamsPlayed] = useState<string[]>([]);
+  const [teamsPlayedThisRound, setTeamsPlayedThisRound] = useState<string[]>([]);
+  
   const [copied, setCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
 
-  const fetchSubmissions = useCallback(async () => {
+  const fetchSubmissions = useCallback(async (roundNum: number) => {
     if (!roomCodeUpper) return;
     const { data: subData } = await supabase
       .from('submissions')
       .select('*')
-      .eq('room_code', roomCodeUpper);
+      .eq('room_code', roomCodeUpper)
+      .eq('round_number', roundNum);
 
     if (subData) {
       const map: Record<string, any> = {};
+      const playedIds: string[] = [];
       subData.forEach((sub) => {
-        if (sub.couple_id) map[sub.couple_id] = sub;
+        if (sub.couple_id) {
+          map[sub.couple_id] = sub;
+          playedIds.push(sub.couple_id);
+        }
       });
       setSubmissionsMap(map);
+      // Automatically reconstruct played teams for the active round on refresh or fetch
+      setTeamsPlayedThisRound((prev) => Array.from(new Set([...prev, ...playedIds])));
     } else {
       setSubmissionsMap({});
     }
@@ -64,6 +76,8 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
   useEffect(() => {
     if (!roomCodeUpper) return;
+
+    let activeRoundNum = currentRoundRef.current;
 
     const fetchGameData = async () => {
       const { data: room } = await supabase
@@ -73,6 +87,9 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .maybeSingle();
 
       if (room) {
+        activeRoundNum = room.current_round || 1;
+        setCurrentRound(activeRoundNum);
+
         if (room.selected_category) {
           setSelectedCategories(room.selected_category.split(','));
         }
@@ -88,7 +105,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
           const currentActive = couplesData.find((c) => c.id === room.active_couple_id) || couplesData[0];
           setActiveCouple(currentActive);
-          setTeamsPlayed([currentActive.id]);
 
           if (!room.active_couple_id) {
             await supabase
@@ -112,10 +128,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         }
       }
 
-      await fetchSubmissions();
+      await fetchSubmissions(activeRoundNum);
     };
 
     fetchGameData();
+
+    const pollInterval = setInterval(() => {
+      fetchSubmissions(currentRoundRef.current);
+    }, 2000);
 
     const channel = supabase
       .channel(`host_room_${roomCodeUpper}`)
@@ -127,11 +147,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             setSubmissionsMap({});
           } else {
             const sub = payload.new as any;
-            if (sub && sub.couple_id) {
-              setSubmissionsMap((prev) => {
-                const existing = prev[sub.couple_id] || {};
-                return { ...prev, [sub.couple_id]: { ...existing, ...sub } };
-              });
+            if (sub && sub.couple_id && Number(sub.round_number) === Number(currentRoundRef.current)) {
+              setSubmissionsMap((prev) => ({
+                ...prev,
+                [sub.couple_id]: { ...(prev[sub.couple_id] || {}), ...sub },
+              }));
+              setTeamsPlayedThisRound((prev) =>
+                prev.includes(sub.couple_id) ? prev : [...prev, sub.couple_id]
+              );
             }
           }
         }
@@ -140,6 +163,13 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `room_code=eq.${roomCodeUpper}` },
         async (payload) => {
+          if (payload.new.current_round && payload.new.current_round !== currentRoundRef.current) {
+            setCurrentRound(payload.new.current_round);
+            setTeamsPlayedThisRound([]);
+            setSubmissionsMap({});
+            await fetchSubmissions(payload.new.current_round);
+          }
+
           const qId = payload.new.current_question_id;
           if (qId) {
             const { data: newQ } = await supabase
@@ -161,7 +191,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             const foundCouple = couples.find((c) => c.id === payload.new.active_couple_id);
             if (foundCouple) {
               setActiveCouple(foundCouple);
-              setTeamsPlayed((prev) => (prev.includes(foundCouple.id) ? prev : [...prev, foundCouple.id]));
             }
           }
         }
@@ -169,6 +198,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       .subscribe();
 
     return () => {
+      clearInterval(pollInterval);
       supabase.removeChannel(channel);
     };
   }, [roomCodeUpper, fetchSubmissions, couples.length]);
@@ -183,7 +213,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
   const handleSelectActiveCouple = async (couple: any) => {
     setActiveCouple(couple);
-    setTeamsPlayed((prev) => (prev.includes(couple.id) ? prev : [...prev, couple.id]));
     await supabase
       .from('rooms')
       .update({ active_couple_id: couple.id })
@@ -204,16 +233,18 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
   const handleNextTeam = async () => {
     if (!canProceedToNextTeam || couples.length === 0) return;
+
+    if (!teamsPlayedThisRound.includes(activeCouple?.id)) {
+      setTeamsPlayedThisRound((prev) => [...prev, activeCouple.id]);
+    }
+
     const currentIndex = couples.findIndex((c) => c.id === activeCouple?.id);
     const nextIndex = (currentIndex + 1) % couples.length;
     const nextCouple = couples[nextIndex];
 
     setActiveCouple(nextCouple);
     setCurrentQuestion(null);
-    setSubmissionsMap({});
-    setTeamsPlayed((prev) => (prev.includes(nextCouple.id) ? prev : [...prev, nextCouple.id]));
 
-    await supabase.from('submissions').delete().eq('room_code', roomCodeUpper);
     await supabase
       .from('rooms')
       .update({
@@ -223,12 +254,25 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       .eq('room_code', roomCodeUpper);
   };
 
-  const handleEndGameAttempt = async () => {
-    if (teamsPlayed.length < couples.length) {
-      alert(`Cannot end match yet! Only ${teamsPlayed.length} out of ${couples.length} teams have played this round. Every team must take a turn before declaring a winner.`);
-      return;
-    }
+  const isRoundComplete = couples.length > 0 && teamsPlayedThisRound.length >= couples.length;
 
+  const handleAdvanceRound = async () => {
+    const nextRound = currentRound + 1;
+    setCurrentRound(nextRound);
+    setTeamsPlayedThisRound([]);
+    setSubmissionsMap({});
+    setCurrentQuestion(null);
+
+    await supabase
+      .from('rooms')
+      .update({
+        current_round: nextRound,
+        current_question_id: null,
+      })
+      .eq('room_code', roomCodeUpper);
+  };
+
+  const handleEndGameAttempt = async () => {
     await supabase
       .from('rooms')
       .update({ selected_category: 'GAME_OVER' })
@@ -251,9 +295,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     const newUsed = [...usedQuestionIds, q.id];
     setCurrentQuestion(q);
     setUsedQuestionIds(newUsed);
-    setSubmissionsMap({});
 
-    await supabase.from('submissions').delete().eq('room_code', roomCodeUpper);
     await supabase
       .from('rooms')
       .update({
@@ -265,8 +307,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
   const handleClearQuestion = async () => {
     setCurrentQuestion(null);
-    setSubmissionsMap({});
-    await supabase.from('submissions').delete().eq('room_code', roomCodeUpper);
     await supabase
       .from('rooms')
       .update({ current_question_id: null })
@@ -315,10 +355,15 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           <div className="flex items-center gap-4">
             <div className="w-2.5 h-2.5 rounded-full bg-[#D4C3A3]" />
             <div>
-              <span className="text-[11px] uppercase tracking-widest text-[#9E978E] font-medium block">
-                Room Code & Sharing
-              </span>
-              <div className="flex flex-wrap items-center gap-2.5 mt-0.5">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] uppercase tracking-widest text-[#9E978E] font-medium block">
+                  Room Code & Sharing
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#26231E] text-[#D4C3A3] border border-[#302B25] flex items-center gap-1">
+                  <Layers className="w-3 h-3" /> Round {currentRound}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2.5 mt-1">
                 <h1 className="text-xl font-mono tracking-wider font-semibold text-[#F3EFE6]">
                   {roomCodeUpper}
                 </h1>
@@ -350,7 +395,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           {currentQuestion ? (
             <>
               <span className="text-[11px] font-mono uppercase tracking-widest text-[#D4C3A3]">
-                Current Question ({currentQuestion.category})
+                Current Question ({currentQuestion.category}) - Round {currentRound}
               </span>
               <h2 className="text-2xl sm:text-3xl font-serif text-[#F3EFE6] leading-relaxed max-w-2xl font-normal">
                 "{currentQuestion.question_text}"
@@ -417,26 +462,36 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             <UserCheck className="w-4 h-4 text-[#D4C3A3]" />
             <div>
               <span className="text-[10px] text-[#9E978E] uppercase tracking-wider font-medium block">
-                Currently Viewing Answers For ({teamsPlayed.length}/{couples.length} Teams Played):
+                Round {currentRound} Status ({teamsPlayedThisRound.length}/{couples.length} Teams Answered):
               </span>
               <span className="text-sm font-serif font-bold text-[#D4C3A3]">
-                {activeCouple?.team_name} ({activeCouple?.husband_name} & {activeCouple?.wife_name})
+                Active: {activeCouple?.team_name} ({activeCouple?.husband_name} & {activeCouple?.wife_name})
               </span>
             </div>
           </div>
 
-          <button
-            onClick={handleNextTeam}
-            disabled={!canProceedToNextTeam}
-            className={`font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm ${
-              canProceedToNextTeam
-                ? 'bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C]'
-                : 'bg-[#1C1A17] text-[#6B645B] border border-[#26231E] cursor-not-allowed opacity-50'
-            }`}
-            title={!canProceedToNextTeam ? 'Mark both answers (Match/Miss) before moving to the next team.' : ''}
-          >
-            Next Team <SkipForward className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {isRoundComplete ? (
+              <button
+                onClick={handleAdvanceRound}
+                className="bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md animate-pulse"
+              >
+                <Layers className="w-3.5 h-3.5" /> Start Round {currentRound + 1}
+              </button>
+            ) : (
+              <button
+                onClick={handleNextTeam}
+                disabled={!canProceedToNextTeam}
+                className={`font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm ${
+                  canProceedToNextTeam
+                    ? 'bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C]'
+                    : 'bg-[#1C1A17] text-[#6B645B] border border-[#26231E] cursor-not-allowed opacity-50'
+                }`}
+              >
+                Next Team <SkipForward className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -604,7 +659,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           <div className="space-y-2.5">
             {couples.map((couple, index) => {
               const isSelected = activeCouple?.id === couple.id;
-              const hasPlayed = teamsPlayed.includes(couple.id);
+              const hasAnsweredThisRound = teamsPlayedThisRound.includes(couple.id);
 
               return (
                 <div
@@ -621,9 +676,9 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
                       <span className="font-medium text-xs text-[#F3EFE6]">
                         {index + 1}. {couple.team_name}
                       </span>
-                      {hasPlayed && !isSelected && (
+                      {hasAnsweredThisRound && (
                         <span className="text-[9px] font-mono text-[#86EFAC] bg-[#1C231B] border border-[#273B25] px-1.5 py-0.2 rounded">
-                          Played
+                          R{currentRound} Done
                         </span>
                       )}
                       {isSelected && (
@@ -651,7 +706,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         </button>
       </div>
 
-      {/* QR Code Expandable Modal */}
       {showQrModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#161412] border border-[#26231E] rounded-3xl p-8 max-w-sm w-full text-center space-y-6 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
