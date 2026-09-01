@@ -318,6 +318,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
     const updateField = spouseType === 'wife' ? 'wife_answer' : 'husband_answer';
 
+    // Query specifically by couple_id and round_number to safely target the row
     const { data: existing } = await supabase
       .from('submissions')
       .select('id')
