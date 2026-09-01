@@ -3,7 +3,7 @@
 import { useState, useEffect, use, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye } from 'lucide-react';
+import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye, Layers } from 'lucide-react';
 
 function getShuffledQuestions(questionsArray: any[], roomCode: string) {
   if (!roomCode || questionsArray.length === 0) return questionsArray;
@@ -48,12 +48,12 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     return null;
   });
 
-  // All hooks must be declared at the top level before any conditional returns
   const [tempCoupleId, setTempCoupleId] = useState('');
   const [tempSpouseType, setTempSpouseType] = useState<'wife' | 'husband' | null>(null);
 
   const [questions, setQuestions] = useState<any[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
+  const [currentRound, setCurrentRound] = useState<number>(1);
   const [currentQuestion, setCurrentQuestion] = useState<any | null>(null);
   const [usedQuestionIds, setUsedQuestionIds] = useState<number[]>([]);
   const [activeCoupleId, setActiveCoupleId] = useState<string | null>(null);
@@ -106,6 +106,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           return;
         }
 
+        if (room.current_round) setCurrentRound(room.current_round);
         if (room.selected_category) setSelectedCategories(room.selected_category.split(','));
         if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
         if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
@@ -151,6 +152,13 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
             return;
           }
 
+          if (room.current_round && room.current_round !== currentRound) {
+            setCurrentRound(room.current_round);
+            setIsSubmitted(false);
+            setAnswer('');
+            setIsRevealed(false);
+          }
+
           if (room.selected_category) setSelectedCategories(room.selected_category.split(','));
           if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
           if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
@@ -185,6 +193,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
             .select('*')
             .eq('room_code', roomCodeUpper)
             .eq('couple_id', currentCoupleId)
+            .eq('round_number', currentRound)
             .maybeSingle();
 
           if (sub) {
@@ -209,6 +218,13 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           if (updatedCat === 'GAME_OVER') {
             router.push(`/winner/${roomCodeUpper}`);
             return;
+          }
+
+          if (payload.new.current_round && payload.new.current_round !== currentRound) {
+            setCurrentRound(payload.new.current_round);
+            setIsSubmitted(false);
+            setAnswer('');
+            setIsRevealed(false);
           }
 
           const qId = payload.new.current_question_id;
@@ -264,7 +280,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       if (channel) supabase.removeChannel(channel);
       if (couplesChannel) supabase.removeChannel(couplesChannel);
     };
-  }, [roomCodeUpper, router]);
+  }, [roomCodeUpper, router, currentRound]);
 
   const filteredQuestions = useMemo(() => {
     let base = selectedCategories.includes('All')
@@ -286,7 +302,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     setAnswer('');
     setIsRevealed(false);
 
-    await supabase.from('submissions').delete().eq('room_code', roomCodeUpper);
     await supabase
       .from('rooms')
       .update({
@@ -308,6 +323,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       .select('id')
       .eq('room_code', roomCodeUpper)
       .eq('couple_id', selectedCoupleId)
+      .eq('round_number', currentRound)
       .maybeSingle();
 
     if (existing) {
@@ -316,6 +332,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       await supabase.from('submissions').insert({
         room_code: roomCodeUpper,
         couple_id: selectedCoupleId,
+        round_number: currentRound,
         [updateField]: answer,
       });
     }
@@ -428,6 +445,9 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         <span className="text-[10px] uppercase font-mono tracking-wider text-[#9E978E] flex items-center gap-1.5">
           <Trophy className="w-3 h-3 text-[#D4C3A3]" /> Live Standings
         </span>
+        <span className="text-[10px] font-mono text-[#D4C3A3] flex items-center gap-1">
+          <Layers className="w-3 h-3" /> Round {currentRound}
+        </span>
       </div>
       <div className="space-y-1.5 max-h-[120px] overflow-y-auto pr-1">
         {couples.map((c, idx) => (
@@ -456,7 +476,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           </div>
           <div className="space-y-1">
             <span className="text-[10px] font-mono uppercase text-[#6B645B] tracking-widest block">
-              In Sync
+              In Sync - Round {currentRound}
             </span>
             <h2 className="text-lg font-serif text-[#F3EFE6]">Waiting for your Turn</h2>
             <p className="text-xs text-[#9E978E] max-w-xs mx-auto leading-relaxed">
@@ -474,8 +494,11 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-4 font-sans">
       <div className="bg-[#161412] border border-[#26231E] rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl">
         <div className="flex justify-between items-center border-b border-[#26231E] pb-3">
-          <span className="text-[11px] uppercase tracking-wider text-[#9E978E]">
+          <span className="text-[11px] uppercase tracking-wider text-[#9E978E] flex items-center gap-1.5">
             Room <span className="font-mono text-[#F3EFE6]">{roomCodeUpper}</span>
+            <span className="text-[9px] font-mono text-[#D4C3A3] bg-[#1C1A17] border border-[#26231E] px-2 py-0.5 rounded-full">
+              Round {currentRound}
+            </span>
           </span>
           <span className="text-[10px] uppercase font-mono px-3 py-0.5 rounded-full bg-[#1C1A17] text-[#D4C3A3] border border-[#26231E]">
             {spouseType}
@@ -536,7 +559,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           <div className="space-y-3 text-center">
             <div className="space-y-1">
               <span className="text-[10px] font-mono uppercase text-[#D4C3A3] tracking-widest block">
-                Your Team's Turn
+                Your Team's Turn - Round {currentRound}
               </span>
               <h3 className="text-base font-serif text-[#F3EFE6]">Pick Next Question Number</h3>
               <p className="text-xs text-[#9E978E]">
