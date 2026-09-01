@@ -283,11 +283,18 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
   }, [roomCodeUpper, router, currentRound]);
 
   const filteredQuestions = useMemo(() => {
-    let base = selectedCategories.includes('All')
-      ? questions
-      : questions.filter((q) => selectedCategories.includes(q.category));
-    
-    return getShuffledQuestions(base, roomCodeUpper);
+    if (!questions || questions.length === 0) return [];
+
+    if (selectedCategories.includes('All') || selectedCategories.length === 0) {
+      return getShuffledQuestions(questions, roomCodeUpper);
+    }
+
+    const matched = questions.filter((q) => 
+      selectedCategories.some(cat => q.category?.trim().toLowerCase() === cat.trim().toLowerCase())
+    );
+
+    const baseToUse = matched.length > 0 ? matched : questions;
+    return getShuffledQuestions(baseToUse, roomCodeUpper);
   }, [questions, selectedCategories, roomCodeUpper]);
 
   const isMyTurn = selectedCoupleId && activeCoupleId ? selectedCoupleId === activeCoupleId : true;
@@ -318,7 +325,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
     const updateField = spouseType === 'wife' ? 'wife_answer' : 'husband_answer';
 
-    // Query specifically by couple_id and round_number to safely target the row
     const { data: existing } = await supabase
       .from('submissions')
       .select('id')

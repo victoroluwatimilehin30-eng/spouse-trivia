@@ -277,11 +277,18 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   };
 
   const filteredQuestions = useMemo(() => {
-    let base = selectedCategories.includes('All') 
-      ? questions 
-      : questions.filter((q) => selectedCategories.includes(q.category));
-    
-    return getShuffledQuestions(base, roomCodeUpper);
+    if (!questions || questions.length === 0) return [];
+
+    if (selectedCategories.includes('All') || selectedCategories.length === 0) {
+      return getShuffledQuestions(questions, roomCodeUpper);
+    }
+
+    const matched = questions.filter((q) => 
+      selectedCategories.some(cat => q.category?.trim().toLowerCase() === cat.trim().toLowerCase())
+    );
+
+    const baseToUse = matched.length > 0 ? matched : questions;
+    return getShuffledQuestions(baseToUse, roomCodeUpper);
   }, [questions, selectedCategories, roomCodeUpper]);
 
   const handlePickQuestion = async (q: any) => {
