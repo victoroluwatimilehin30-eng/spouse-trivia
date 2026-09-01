@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 function getShuffledQuestions(questionsArray: any[], roomCode: string) {
@@ -42,6 +42,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const [submissionsMap, setSubmissionsMap] = useState<Record<string, any>>({});
   const [teamsPlayed, setTeamsPlayed] = useState<string[]>([]);
   const [copied, setCopied] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
 
   const fetchSubmissions = useCallback(async () => {
     if (!roomCodeUpper) return;
@@ -172,8 +173,9 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     };
   }, [roomCodeUpper, fetchSubmissions, couples.length]);
 
+  const playerLink = typeof window !== 'undefined' ? `${window.location.origin}/play/${roomCodeUpper}` : '';
+
   const handleCopyPlayerLink = () => {
-    const playerLink = `${window.location.origin}/play/${roomCodeUpper}`;
     navigator.clipboard.writeText(playerLink);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -307,16 +309,16 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   };
 
   return (
-    <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] p-6 lg:p-10 font-sans grid grid-cols-1 lg:grid-cols-4 gap-6">
+    <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] p-6 lg:p-10 font-sans grid grid-cols-1 lg:grid-cols-4 gap-6 relative">
       <div className="lg:col-span-3 flex flex-col gap-6">
         <div className="flex flex-wrap justify-between items-center bg-[#161412] border border-[#26231E] p-5 gap-4 rounded-2xl">
           <div className="flex items-center gap-4">
             <div className="w-2.5 h-2.5 rounded-full bg-[#D4C3A3]" />
             <div>
               <span className="text-[11px] uppercase tracking-widest text-[#9E978E] font-medium block">
-                Room Code & Player Link
+                Room Code & Sharing
               </span>
-              <div className="flex items-center gap-3 mt-0.5">
+              <div className="flex flex-wrap items-center gap-2.5 mt-0.5">
                 <h1 className="text-xl font-mono tracking-wider font-semibold text-[#F3EFE6]">
                   {roomCodeUpper}
                 </h1>
@@ -325,7 +327,13 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
                   className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
                 >
                   {copied ? <Check className="w-3.5 h-3.5 text-[#86EFAC]" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copied ? 'Link Copied!' : 'Copy Player Link'}
+                  {copied ? 'Link Copied!' : 'Copy Link'}
+                </button>
+                <button
+                  onClick={() => setShowQrModal(true)}
+                  className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
+                >
+                  <QrCode className="w-3.5 h-3.5" /> Show QR Code
                 </button>
               </div>
             </div>
@@ -642,6 +650,53 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           <Flag className="w-3.5 h-3.5" /> Finish Game & Declare Winner
         </button>
       </div>
+
+      {/* QR Code Expandable Modal */}
+      {showQrModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#161412] border border-[#26231E] rounded-3xl p-8 max-w-sm w-full text-center space-y-6 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+            <button
+              onClick={() => setShowQrModal(false)}
+              className="absolute top-4 right-4 bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#9E978E] hover:text-[#F3EFE6] p-2 rounded-full transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="space-y-1">
+              <span className="text-[10px] font-mono uppercase tracking-widest text-[#D4C3A3]">
+                Room Code: {roomCodeUpper}
+              </span>
+              <h2 className="text-xl font-serif text-[#F3EFE6]">Scan to Join Game</h2>
+              <p className="text-xs text-[#9E978E]">
+                Point your phone camera at the code below to join instantly.
+              </p>
+            </div>
+
+            <div className="bg-white p-4 rounded-2xl inline-block shadow-lg">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(playerLink)}`}
+                alt="Player Join QR Code"
+                className="w-48 h-48 mx-auto"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-[11px] font-mono text-[#6B645B] truncate bg-[#0F0E0C] p-2.5 rounded-xl border border-[#26231E]">
+                {playerLink}
+              </p>
+              <button
+                onClick={() => {
+                  handleCopyPlayerLink();
+                }}
+                className="w-full bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold py-3 rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-md"
+              >
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? 'Link Copied to Clipboard!' : 'Copy Player Link'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
