@@ -87,14 +87,15 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
   useEffect(() => {
     if (!roomCodeUpper) return;
 
-    let channel: any;
-    let couplesChannel: any;
     let pollInterval: any;
+
+    // Safety timeout so loading screen never hangs forever
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+    }, 3000);
 
     const initRoom = async () => {
       try {
-        setLoading(true);
-
         const { data: qData } = await supabase
           .from('questions')
           .select('*')
@@ -115,6 +116,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         if (roomErr || !room) {
           setRoomError(true);
           setLoading(false);
+          clearTimeout(safetyTimer);
           return;
         }
 
@@ -143,19 +145,18 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         if (couplesData && couplesData.length > 0) {
           setCouples(couplesData);
           if (!room.active_couple_id) setActiveCoupleId(couplesData[0].id);
-        } else {
-          setRoomError(true);
         }
       } catch (err) {
         console.error('Init error:', err);
-        setRoomError(true);
       } finally {
         setLoading(false);
+        clearTimeout(safetyTimer);
       }
     };
 
     initRoom();
 
+    // Polling every 1 second to keep room state, questions, and couples fully stable
     pollInterval = setInterval(async () => {
       try {
         const { data: room } = await supabase
@@ -195,7 +196,9 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
             .eq('room_id', room.id)
             .order('total_score', { ascending: false });
 
-          if (couplesData) setCouples(couplesData);
+          if (couplesData && couplesData.length > 0) {
+            setCouples(couplesData);
+          }
         }
 
         const currentCoupleId = localStorage.getItem(`player_couple_${roomCodeUpper}`);
@@ -222,74 +225,9 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       }
     }, 1000);
 
-    channel = supabase
-      .channel(`player_room_sync_${roomCodeUpper}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'rooms', filter: `room_code=eq.${roomCodeUpper}` },
-        async (payload) => {
-          const updatedCat = payload.new.selected_category;
-          if (updatedCat === 'GAME_OVER') {
-            router.push(`/winner/${roomCodeUpper}`);
-            return;
-          }
-
-          if (payload.new.current_round && payload.new.current_round !== currentRound) {
-            setCurrentRound(payload.new.current_round);
-            setIsSubmitted(false);
-            setAnswer('');
-            setIsRevealed(false);
-          }
-
-          const qId = payload.new.current_question_id;
-          if (qId) {
-            const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
-            const newQ = activePool.find(item => Number(item.id) === Number(qId));
-
-            if (newQ) {
-              setCurrentQuestion(newQ);
-              setIsSubmitted(false);
-              setAnswer('');
-              setIsRevealed(false);
-            }
-          } else {
-            setCurrentQuestion(null);
-            setIsSubmitted(false);
-            setAnswer('');
-            setIsRevealed(false);
-          }
-
-          if (payload.new.used_question_ids) {
-            setUsedQuestionIds(payload.new.used_question_ids);
-          }
-          if (payload.new.active_couple_id) {
-            setActiveCoupleId(payload.new.active_couple_id);
-          }
-        }
-      )
-      .subscribe();
-
-    couplesChannel = supabase
-      .channel(`player_couples_sync_${roomCodeUpper}`)
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'couples' },
-        () => {
-          supabase
-            .from('couples')
-            .select('*')
-            .order('total_score', { ascending: false })
-            .then(({ data }) => {
-              if (data) setCouples(data);
-            });
-        }
-      )
-      .subscribe();
-
     return () => {
+      clearTimeout(safetyTimer);
       clearInterval(pollInterval);
-      if (channel) supabase.removeChannel(channel);
-      if (couplesChannel) supabase.removeChannel(couplesChannel);
     };
   }, [roomCodeUpper, router, currentRound, questions]);
 
@@ -400,18 +338,24 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
               <label className="block text-[11px] uppercase tracking-wider text-[#9E978E] mb-2">
                 1. Select Team
               </label>
-              <select
-                value={tempCoupleId}
-                onChange={(e) => setTempCoupleId(e.target.value)}
-                className="w-full bg-[#0F0E0C] border border-[#26231E] text-xs text-[#F3EFE6] rounded-xl p-3 focus:outline-none"
-              >
-                <option value="">-- Choose Couple --</option>
-                {couples.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.team_name} ({c.husband_name} & {c.wife_name})
-                  </option>
-                ))}
-              </select>
+              {couples.length > 0 ? (
+                <select
+                  value={tempCoupleId}
+                  onChange={(e) => setTempCoupleId(e.target.value)}
+                  className="w-full bg-[#0F0E0C] border border-[#26231E] text-xs text-[#F3EFE6] rounded-xl p-3 focus:outline-none"
+                >
+                  <option value="">-- Choose Couple --</option>
+                  {couples.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.team_name} ({c.husband_name} & {c.wife_name})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="bg-[#0F0E0C] border border-[#26231E] p-3 rounded-xl text-center text-xs text-[#9E978E] animate-pulse">
+                  Waiting for host to load teams...
+                </div>
+              )}
             </div>
 
             {tempCoupleId && (
