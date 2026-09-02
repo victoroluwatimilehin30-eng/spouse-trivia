@@ -3,7 +3,7 @@
 import { useState, useEffect, use, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye, Layers, Edit3 } from 'lucide-react';
+import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye, Layers, Edit3, Heart, Users } from 'lucide-react';
 
 const FALLBACK_QUESTIONS = [
   { id: 1, category: 'Habits', question_text: 'What is your spouse absolute favorite comfort food?' },
@@ -40,30 +40,37 @@ function getShuffledQuestions(questionsArray: any[], roomCode: string) {
   return arr;
 }
 
-export default function PlayerInput({ params }: { params: Promise<{ roomCode: string }> }) {
+export default function PlayerPage({ params }: { params: Promise<{ roomCode: string }> }) {
   const resolvedParams = use(params);
   const router = useRouter();
   const roomCodeUpper = resolvedParams?.roomCode ? resolvedParams.roomCode.toUpperCase() : '';
 
+  const [room, setRoom] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [roomError, setRoomError] = useState(false);
   const [couples, setCouples] = useState<any[]>([]);
-  
-  const [selectedCoupleId, setSelectedCoupleId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem(`player_couple_${roomCodeUpper}`) || '';
-    }
-    return '';
-  });
 
-  const [spouseType, setSpouseType] = useState<'wife' | 'husband' | null>(() => {
+  // Registration states
+  const [teamName, setTeamName] = useState('');
+  const [role, setRole] = useState<'husband' | 'wife'>('husband');
+  const [myName, setMyName] = useState('');
+  
+  const [myCouple, setMyCouple] = useState<any>(() => {
     if (typeof window !== 'undefined') {
-      return (localStorage.getItem(`player_spouse_${roomCodeUpper}`) as 'wife' | 'husband') || null;
+      const saved = localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
+      return saved ? JSON.parse(saved) : null;
     }
     return null;
   });
 
-  const [tempCoupleId, setTempCoupleId] = useState('');
-  const [tempSpouseType, setTempSpouseType] = useState<'wife' | 'husband' | null>(null);
+  const [registered, setRegistered] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return !!localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
+    }
+    return false;
+  });
 
+  // Gameplay states
   const [questions, setQuestions] = useState<any[]>(FALLBACK_QUESTIONS);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
   const [currentRound, setCurrentRound] = useState<number>(1);
@@ -76,25 +83,14 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
   const [answer, setAnswer] = useState('');
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isRevealed, setIsRevealed] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [roomError, setRoomError] = useState(false);
   const [teamSubmissionsHistory, setTeamSubmissionsHistory] = useState<any[]>([]);
 
-  const handleSelectTeamAndRole = (coupleId: string, type: 'wife' | 'husband') => {
-    setSelectedCoupleId(coupleId);
-    setSpouseType(type);
-    localStorage.setItem(`player_couple_${roomCodeUpper}`, coupleId);
-    localStorage.setItem(`player_spouse_${roomCodeUpper}`, type);
-  };
-
+  // Initialize room and user session
   useEffect(() => {
     if (!roomCodeUpper) return;
 
     let pollInterval: any;
-
-    const safetyTimer = setTimeout(() => {
-      setLoading(false);
-    }, 3000);
+    const safetyTimer = setTimeout(() => setLoading(false), 3000);
 
     const initRoom = async () => {
       try {
@@ -106,75 +102,63 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
         setQuestions(activeList);
 
-        const { data: room, error: roomErr } = await supabase
+        let { data: roomData, error: roomErr } = await supabase
           .from('rooms')
           .select('*')
           .eq('room_code', roomCodeUpper)
           .maybeSingle();
 
-        if (roomErr || !room) {
+        if (roomErr || !roomData) {
+          // Auto-create room if it doesn't exist yet
+          const { data: newRoom } = await supabase
+            .from('rooms')
+            .insert({ room_code: roomCodeUpper, status: 'waiting', current_round: 1, selected_category: 'All' })
+            .select()
+            .single();
+          roomData = newRoom;
+        }
+
+        if (!roomData) {
           setRoomError(true);
           setLoading(false);
           clearTimeout(safetyTimer);
           return;
         }
 
-        if (room.selected_category === 'GAME_OVER') {
+        setRoom(roomData);
+        if (roomData.selected_category === 'GAME_OVER') {
           router.push(`/winner/${roomCodeUpper}`);
           return;
         }
 
-        const roundNum = room.current_round || 1;
+        const roundNum = roomData.current_round || 1;
         setCurrentRound(roundNum);
-        if (room.selected_category) setSelectedCategories(room.selected_category.split(','));
-        if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
-        if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
-        if (room.question_started_at) setQuestionStartedAt(room.question_started_at);
+        if (roomData.selected_category) setSelectedCategories(roomData.selected_category.split(','));
+        if (roomData.used_question_ids) setUsedQuestionIds(roomData.used_question_ids);
+        if (roomData.active_couple_id) setActiveCoupleId(roomData.active_couple_id);
+        if (roomData.question_started_at) setQuestionStartedAt(roomData.question_started_at);
 
-        if (room.current_question_id) {
-          const found = activeList.find((q: any) => Number(q.id) === Number(room.current_question_id));
-          if (found) {
-            setCurrentQuestion(found);
-          } else {
-            const { data: remoteQ } = await supabase.from('questions').select('*').eq('id', room.current_question_id).maybeSingle();
-            if (remoteQ) setCurrentQuestion(remoteQ);
-          }
+        if (roomData.current_question_id) {
+          const found = activeList.find((q: any) => Number(q.id) === Number(roomData.current_question_id));
+          if (found) setCurrentQuestion(found);
         }
 
         const { data: couplesData } = await supabase
           .from('couples')
           .select('*')
-          .eq('room_id', room.id)
+          .eq('room_id', roomData.id)
           .order('total_score', { ascending: false });
 
-        if (couplesData && couplesData.length > 0) {
+        if (couplesData) {
           setCouples(couplesData);
-          if (!room.active_couple_id) setActiveCoupleId(couplesData[0].id);
-        }
-
-        const currentCoupleId = localStorage.getItem(`player_couple_${roomCodeUpper}`);
-        const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
-
-        if (currentCoupleId && currentSpouse) {
-          const { data: allSubs } = await supabase
-            .from('submissions')
-            .select('*')
-            .eq('room_code', roomCodeUpper)
-            .eq('couple_id', currentCoupleId);
-
-          if (allSubs) {
-            setTeamSubmissionsHistory(allSubs);
-            const currentSub = allSubs.find(s => Number(s.round_number) === Number(roundNum));
-            if (currentSub) {
-              const myField = currentSpouse === 'wife' ? 'wife_answer' : 'husband_answer';
-              if (currentSub[myField]) {
-                setAnswer(currentSub[myField]);
-                setIsSubmitted(true);
-              }
-              const maskField = currentSpouse === 'wife' ? 'wife_unmasked' : 'husband_unmasked';
-              if (currentSub[maskField] !== undefined) {
-                setIsRevealed(currentSub[maskField]);
-              }
+          // If we have saved couple id, refresh our couple object
+          const savedCouple = localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
+          if (savedCouple) {
+            const parsed = JSON.parse(savedCouple);
+            const fresh = couplesData.find(c => c.id === parsed.id);
+            if (fresh) {
+              setMyCouple(fresh);
+              localStorage.setItem(`player_couple_obj_${roomCodeUpper}`, JSON.stringify(fresh));
             }
           }
         }
@@ -188,44 +172,40 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
     initRoom();
 
+    // Polling loop for real-time updates
     pollInterval = setInterval(async () => {
       try {
-        const { data: room } = await supabase
+        const { data: roomData } = await supabase
           .from('rooms')
           .select('*')
           .eq('room_code', roomCodeUpper)
           .maybeSingle();
 
-        if (room) {
-          if (room.selected_category === 'GAME_OVER') {
+        if (roomData) {
+          setRoom(roomData);
+          if (roomData.selected_category === 'GAME_OVER') {
             router.push(`/winner/${roomCodeUpper}`);
             return;
           }
 
-          if (room.current_round && room.current_round !== currentRound) {
-            setCurrentRound(room.current_round);
+          if (roomData.current_round && roomData.current_round !== currentRound) {
+            setCurrentRound(roomData.current_round);
             setIsSubmitted(false);
             setAnswer('');
             setIsRevealed(false);
           }
 
-          if (room.selected_category) setSelectedCategories(room.selected_category.split(','));
-          if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
-          if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
-          if (room.question_started_at !== questionStartedAt) {
-            setQuestionStartedAt(room.question_started_at);
+          if (roomData.selected_category) setSelectedCategories(roomData.selected_category.split(','));
+          if (roomData.used_question_ids) setUsedQuestionIds(roomData.used_question_ids);
+          if (roomData.active_couple_id) setActiveCoupleId(roomData.active_couple_id);
+          if (roomData.question_started_at !== questionStartedAt) {
+            setQuestionStartedAt(roomData.question_started_at);
           }
 
-          if (room.current_question_id) {
+          if (roomData.current_question_id) {
             const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
-            const q = activePool.find((item: any) => Number(item.id) === Number(room.current_question_id));
-            if (q) {
-              setCurrentQuestion(q);
-            } else {
-              supabase.from('questions').select('*').eq('id', room.current_question_id).maybeSingle().then(({ data }) => {
-                if (data) setCurrentQuestion(data);
-              });
-            }
+            const q = activePool.find((item: any) => Number(item.id) === Number(roomData.current_question_id));
+            if (q) setCurrentQuestion(q);
           } else {
             setCurrentQuestion(null);
             setQuestionStartedAt(null);
@@ -234,23 +214,33 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           const { data: couplesData } = await supabase
             .from('couples')
             .select('*')
-            .eq('room_id', room.id)
+            .eq('room_id', roomData.id)
             .order('total_score', { ascending: false });
 
-          if (couplesData && couplesData.length > 0) {
+          if (couplesData) {
             setCouples(couplesData);
+            const savedCouple = localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
+            if (savedCouple) {
+              const parsed = JSON.parse(savedCouple);
+              const fresh = couplesData.find(c => c.id === parsed.id);
+              if (fresh) {
+                setMyCouple(fresh);
+                localStorage.setItem(`player_couple_obj_${roomCodeUpper}`, JSON.stringify(fresh));
+              }
+            }
           }
         }
 
-        const currentCoupleId = localStorage.getItem(`player_couple_${roomCodeUpper}`);
-        const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
+        const savedCouple = localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
+        if (savedCouple) {
+          const parsed = JSON.parse(savedCouple);
+          const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
 
-        if (currentCoupleId) {
           const { data: allSubs } = await supabase
             .from('submissions')
             .select('*')
             .eq('room_code', roomCodeUpper)
-            .eq('couple_id', currentCoupleId);
+            .eq('couple_id', parsed.id);
 
           if (allSubs) {
             setTeamSubmissionsHistory(allSubs);
@@ -261,22 +251,9 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
                 setAnswer(currentSub[myField]);
                 setIsSubmitted(true);
               }
-            }
-          }
-
-          if (currentSpouse) {
-            const { data: sub } = await supabase
-              .from('submissions')
-              .select('*')
-              .eq('room_code', roomCodeUpper)
-              .eq('couple_id', currentCoupleId)
-              .eq('round_number', currentRound)
-              .maybeSingle();
-
-            if (sub) {
               const maskField = currentSpouse === 'wife' ? 'wife_unmasked' : 'husband_unmasked';
-              if (sub[maskField] !== undefined) {
-                setIsRevealed(sub[maskField]);
+              if (currentSub[maskField] !== undefined) {
+                setIsRevealed(currentSub[maskField]);
               }
             }
           }
@@ -290,8 +267,9 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       clearTimeout(safetyTimer);
       clearInterval(pollInterval);
     };
-  }, [roomCodeUpper, router, currentRound, questions]);
+  }, [roomCodeUpper, router, currentRound, questions, questionStartedAt, answer, isSubmitted]);
 
+  // Timer countdown
   useEffect(() => {
     if (!questionStartedAt) {
       setTimeLeft(60);
@@ -309,64 +287,75 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     return () => clearInterval(timerInterval);
   }, [questionStartedAt]);
 
-  const filteredQuestions = useMemo(() => {
-    const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
+  // Registration handler (supports matching existing team name if partner already started it)
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!teamName.trim() || !myName.trim() || !room) return;
 
-    if (selectedCategories.includes('All') || selectedCategories.length === 0) {
-      return getShuffledQuestions(activePool, roomCodeUpper);
+    const { data: existingTeam } = await supabase
+      .from('couples')
+      .select('*')
+      .eq('room_id', room.id)
+      .ilike('team_name', teamName.trim())
+      .maybeSingle();
+
+    if (existingTeam) {
+      const updatePayload: any = {};
+      if (role === 'husband') {
+        updatePayload.husband_name = myName.trim();
+      } else {
+        updatePayload.wife_name = myName.trim();
+      }
+
+      const { data: updated, error } = await supabase
+        .from('couples')
+        .update(updatePayload)
+        .eq('id', existingTeam.id)
+        .select()
+        .single();
+
+      if (!error && updated) {
+        setMyCouple(updated);
+        setRegistered(true);
+        localStorage.setItem(`player_couple_obj_${roomCodeUpper}`, JSON.stringify(updated));
+        localStorage.setItem(`player_spouse_${roomCodeUpper}`, role);
+      }
+    } else {
+      const newTeamPayload: any = {
+        room_id: room.id,
+        team_name: teamName.trim(),
+        total_score: 0,
+        husband_name: role === 'husband' ? myName.trim() : null,
+        wife_name: role === 'wife' ? myName.trim() : null,
+      };
+
+      const { data: created, error } = await supabase
+        .from('couples')
+        .insert(newTeamPayload)
+        .select()
+        .single();
+
+      if (!error && created) {
+        setMyCouple(created);
+        setRegistered(true);
+        localStorage.setItem(`player_couple_obj_${roomCodeUpper}`, JSON.stringify(created));
+        localStorage.setItem(`player_spouse_${roomCodeUpper}`, role);
+      }
     }
-
-    const matched = activePool.filter((q: any) => 
-      selectedCategories.some((cat: string) => q.category?.trim().toLowerCase() === cat.trim().toLowerCase())
-    );
-
-    const baseToUse = matched.length > 0 ? matched : activePool;
-    return getShuffledQuestions(baseToUse, roomCodeUpper);
-  }, [questions, selectedCategories, roomCodeUpper]);
-
-  const currentQuestionNumber = useMemo(() => {
-    if (!currentQuestion) return null;
-    const idx = filteredQuestions.findIndex((q: any) => Number(q.id) === Number(currentQuestion.id));
-    return idx !== -1 ? idx + 1 : null;
-  }, [currentQuestion, filteredQuestions]);
-
-  const isMyTurn = selectedCoupleId && activeCoupleId ? selectedCoupleId === activeCoupleId : true;
-
-  const handlePlayerPickQuestion = async (q: any) => {
-    if (!isMyTurn || usedQuestionIds.includes(q.id)) return;
-
-    const newUsed = [...usedQuestionIds, q.id];
-    const nowIso = new Date().toISOString();
-    setCurrentQuestion(q);
-    setUsedQuestionIds(newUsed);
-    setQuestionStartedAt(nowIso);
-    setTimeLeft(60);
-    setIsSubmitted(false);
-    setAnswer('');
-    setIsRevealed(false);
-
-    await supabase
-      .from('rooms')
-      .update({
-        current_question_id: q.id,
-        used_question_ids: newUsed,
-        active_couple_id: selectedCoupleId,
-        question_started_at: nowIso,
-      })
-      .eq('room_code', roomCodeUpper);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmitAnswer = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!answer.trim() || !spouseType || !selectedCoupleId || timeLeft <= 0) return;
+    const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
+    if (!answer.trim() || !currentSpouse || !myCouple || timeLeft <= 0) return;
 
-    const updateField = spouseType === 'wife' ? 'wife_answer' : 'husband_answer';
+    const updateField = currentSpouse === 'wife' ? 'wife_answer' : 'husband_answer';
 
     const { data: existing } = await supabase
       .from('submissions')
       .select('id')
       .eq('room_code', roomCodeUpper)
-      .eq('couple_id', selectedCoupleId)
+      .eq('couple_id', myCouple.id)
       .eq('round_number', currentRound)
       .maybeSingle();
 
@@ -375,7 +364,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     } else {
       await supabase.from('submissions').insert({
         room_code: roomCodeUpper,
-        couple_id: selectedCoupleId,
+        couple_id: myCouple.id,
         round_number: currentRound,
         [updateField]: answer,
       });
@@ -384,10 +373,30 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     setIsSubmitted(true);
   };
 
+  const filteredQuestions = useMemo(() => {
+    const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
+    if (selectedCategories.includes('All') || selectedCategories.length === 0) {
+      return getShuffledQuestions(activePool, roomCodeUpper);
+    }
+    const matched = activePool.filter((q: any) => 
+      selectedCategories.some((cat: string) => q.category?.trim().toLowerCase() === cat.trim().toLowerCase())
+    );
+    return getShuffledQuestions(matched.length > 0 ? matched : activePool, roomCodeUpper);
+  }, [questions, selectedCategories, roomCodeUpper]);
+
+  const currentQuestionNumber = useMemo(() => {
+    if (!currentQuestion) return null;
+    const idx = filteredQuestions.findIndex((q: any) => Number(q.id) === Number(currentQuestion.id));
+    return idx !== -1 ? idx + 1 : null;
+  }, [currentQuestion, filteredQuestions]);
+
+  const currentSpouse = typeof window !== 'undefined' ? localStorage.getItem(`player_spouse_${roomCodeUpper}`) : null;
+  const isMyTurn = myCouple && activeCoupleId ? myCouple.id === activeCoupleId : true;
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center font-sans">
-        <p className="text-xs font-mono text-[#9E978E] animate-pulse">Connecting to room...</p>
+        <p className="text-xs font-mono uppercase tracking-widest animate-pulse text-[#D4C3A3]">Loading room...</p>
       </div>
     );
   }
@@ -398,10 +407,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         <div className="bg-[#161412] border border-[#26231E] p-8 rounded-2xl max-w-sm w-full text-center space-y-4 shadow-2xl">
           <AlertCircle className="w-8 h-8 text-[#EF4444] mx-auto" />
           <h1 className="text-lg font-serif text-[#F3EFE6]">Room Not Found</h1>
-          <a
-            href="/"
-            className="inline-block bg-[#1C1A17] border border-[#302B25] text-[#F3EFE6] px-6 py-2 rounded-full text-xs"
-          >
+          <a href="/" className="inline-block bg-[#1C1A17] border border-[#302B25] text-[#F3EFE6] px-6 py-2 rounded-full text-xs">
             Go Home
           </a>
         </div>
@@ -409,86 +415,113 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     );
   }
 
-  if (!spouseType || !selectedCoupleId) {
+  // ==========================================
+  // STATE 1: PRE-GAME LOBBY (Room is waiting)
+  // ==========================================
+  if (room?.status === 'waiting') {
     return (
-      <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-6 font-sans">
-        <div className="bg-[#161412] border border-[#26231E] p-8 rounded-2xl max-w-sm w-full text-center space-y-6 shadow-2xl">
+      <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] p-6 flex flex-col items-center justify-center font-sans">
+        <div className="max-w-md w-full bg-[#161412] border border-[#26231E] rounded-3xl p-8 space-y-6 shadow-2xl text-center">
           <div className="space-y-1">
-            <span className="text-[11px] uppercase tracking-widest text-[#9E978E]">In Sync</span>
-            <h1 className="text-xl font-serif text-[#F3EFE6]">Join Room</h1>
-            <p className="text-[#9E978E] text-xs">
-              Room Code: <span className="font-mono text-[#F3EFE6]">{roomCodeUpper}</span>
-            </p>
+            <span className="text-[10px] font-mono uppercase tracking-widest text-[#D4C3A3] bg-[#26231E] px-3 py-1 rounded-full border border-[#302B25]">
+              Room: {roomCodeUpper}
+            </span>
+            <h1 className="text-2xl font-serif font-normal text-[#F3EFE6] mt-2">Couple Trivia Lobby</h1>
           </div>
 
-          <div className="space-y-4 text-left">
-            <div>
-              <label className="block text-[11px] uppercase tracking-wider text-[#9E978E] mb-2">
-                1. Select Team
-              </label>
-              {couples.length > 0 ? (
-                <select
-                  value={tempCoupleId}
-                  onChange={(e) => setTempCoupleId(e.target.value)}
-                  className="w-full bg-[#0F0E0C] border border-[#26231E] text-xs text-[#F3EFE6] rounded-xl p-3 focus:outline-none"
-                >
-                  <option value="">-- Choose Couple --</option>
-                  {couples.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.team_name} ({c.husband_name} & {c.wife_name})
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="bg-[#0F0E0C] border border-[#26231E] p-3 rounded-xl text-center text-xs text-[#9E978E] animate-pulse">
-                  Waiting for host to load teams...
-                </div>
-              )}
-            </div>
+          {!registered ? (
+            <form onSubmit={handleRegister} className="space-y-4 text-left">
+              <div className="space-y-1">
+                <label className="text-[11px] uppercase tracking-wider text-[#9E978E] font-medium block">Team Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. The Smiths"
+                  value={teamName}
+                  onChange={(e) => setTeamName(e.target.value)}
+                  className="w-full bg-[#0F0E0C] border border-[#26231E] rounded-xl px-4 py-3 text-xs text-[#F3EFE6] focus:outline-none focus:border-[#D4C3A3]"
+                />
+              </div>
 
-            {tempCoupleId && (
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider text-[#9E978E] mb-2">
-                  2. Who is holding this device?
-                </label>
-                <div className="grid grid-cols-2 gap-2 mb-4">
+              <div className="space-y-1">
+                <label className="text-[11px] uppercase tracking-wider text-[#9E978E] font-medium block">I am joining as:</label>
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
-                    onClick={() => setTempSpouseType('wife')}
-                    className={`py-3 rounded-xl font-medium text-xs border transition-all ${
-                      tempSpouseType === 'wife' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#1C1A17] text-[#F3EFE6] border-[#302B25]'
-                    }`}
-                  >
-                    Wife
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTempSpouseType('husband')}
-                    className={`py-3 rounded-xl font-medium text-xs border transition-all ${
-                      tempSpouseType === 'husband' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#1C1A17] text-[#F3EFE6] border-[#302B25]'
-                    }`}
+                    onClick={() => setRole('husband')}
+                    className={`py-2.5 rounded-xl text-xs font-semibold border transition-all ${role === 'husband' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#0F0E0C] text-[#9E978E] border-[#26231E]'}`}
                   >
                     Husband
                   </button>
-                </div>
-
-                {tempSpouseType && (
                   <button
                     type="button"
-                    onClick={() => handleSelectTeamAndRole(tempCoupleId, tempSpouseType)}
-                    className="w-full bg-[#F3EFE6] text-[#0F0E0C] font-semibold py-3 rounded-xl text-xs transition-all"
+                    onClick={() => setRole('wife')}
+                    className={`py-2.5 rounded-xl text-xs font-semibold border transition-all ${role === 'wife' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#0F0E0C] text-[#9E978E] border-[#26231E]'}`}
                   >
-                    Enter Game Room
+                    Wife
                   </button>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[11px] uppercase tracking-wider text-[#9E978E] font-medium block">Your Name</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Enter your name"
+                  value={myName}
+                  onChange={(e) => setMyName(e.target.value)}
+                  className="w-full bg-[#0F0E0C] border border-[#26231E] rounded-xl px-4 py-3 text-xs text-[#F3EFE6] focus:outline-none focus:border-[#D4C3A3]"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer mt-2"
+              >
+                Join Room Lobby
+              </button>
+            </form>
+          ) : (
+            <div className="space-y-6 py-4">
+              <div className="bg-[#0F0E0C] border border-[#26231E] p-6 rounded-2xl space-y-4 text-center">
+                <div className="flex items-center justify-center gap-1.5 text-[#D4C3A3]">
+                  <Heart className="w-4 h-4 fill-current" />
+                  <span className="text-xs font-semibold uppercase tracking-wider">Team: {myCouple?.team_name}</span>
+                </div>
+
+                <div className="space-y-2 text-xs border-t border-b border-[#26231E] py-3 text-left">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[#9E978E]">Husband:</span>
+                    <span className="font-semibold text-[#F3EFE6]">{myCouple?.husband_name || <span className="text-amber-400 italic font-normal">Waiting to join...</span>}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-[#9E978E]">Wife:</span>
+                    <span className="font-semibold text-[#F3EFE6]">{myCouple?.wife_name || <span className="text-amber-400 italic font-normal">Waiting to join...</span>}</span>
+                  </div>
+                </div>
+
+                {(!myCouple?.husband_name || !myCouple?.wife_name) ? (
+                  <div className="space-y-2 animate-pulse pt-2">
+                    <p className="text-xs text-amber-400 font-mono">Waiting for your partner to join this team...</p>
+                    <p className="text-[10px] text-[#9E978E]">Share this link with your partner so they can enter the exact same team name.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 animate-pulse pt-2">
+                    <p className="text-xs text-[#86EFAC] font-mono">Team is complete! Waiting for host to start the game...</p>
+                  </div>
                 )}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
     );
   }
 
+  // ==========================================
+  // STATE 2: ACTIVE GAMEPLAY VIEW
+  // ==========================================
   const renderLiveScoreboard = () => (
     <div className="bg-[#0F0E0C] border border-[#26231E] rounded-xl p-3.5 space-y-3 mt-4 text-left">
       <div className="flex items-center justify-between border-b border-[#26231E] pb-2">
@@ -504,7 +537,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           <div
             key={c.id}
             className={`flex items-center justify-between p-2 rounded-lg text-xs ${
-              c.id === selectedCoupleId ? 'bg-[#26231E] border border-[#D4C3A3]/30' : 'bg-[#161412]'
+              c.id === myCouple?.id ? 'bg-[#26231E] border border-[#D4C3A3]/30' : 'bg-[#161412]'
             }`}
           >
             <span className="text-[#F3EFE6] truncate max-w-[180px]">
@@ -514,24 +547,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           </div>
         ))}
       </div>
-
-      {teamSubmissionsHistory.length > 0 && (
-        <div className="border-t border-[#26231E] pt-2 space-y-1">
-          <span className="text-[9px] uppercase font-mono tracking-wider text-[#9E978E] block">
-            Your Team's Answer History:
-          </span>
-          <div className="space-y-1 max-h-[80px] overflow-y-auto">
-            {teamSubmissionsHistory.map((sub) => (
-              <div key={sub.id} className="text-[11px] font-mono bg-[#161412] p-1.5 rounded border border-[#26231E] flex justify-between items-center">
-                <span className="text-[#D4C3A3]">R{sub.round_number}</span>
-                <span className="text-[#F3EFE6] truncate max-w-[180px]">
-                  {spouseType === 'wife' ? sub.wife_answer || '(No answer)' : sub.husband_answer || '(No answer)'}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 
@@ -551,7 +566,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
               Another team is currently on stage answering their prompt. Please standby...
             </p>
           </div>
-
           {renderLiveScoreboard()}
         </div>
       </div>
@@ -569,7 +583,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
             </span>
           </span>
           <span className="text-[10px] uppercase font-mono px-3 py-0.5 rounded-full bg-[#1C1A17] text-[#D4C3A3] border border-[#26231E]">
-            {spouseType}
+            {currentSpouse || 'Player'}
           </span>
         </div>
 
@@ -601,7 +615,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
                 <p className="text-xs text-[#9E978E]">The 60-second countdown has expired. Waiting for host grading.</p>
               </div>
             ) : !isSubmitted ? (
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmitAnswer} className="space-y-4">
                 <div className="space-y-1.5">
                   <label className="block text-xs font-medium text-[#9E978E]">Your Answer (Editable until timer ends):</label>
                   <textarea
@@ -654,31 +668,10 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
               <span className="text-[10px] font-mono uppercase text-[#D4C3A3] tracking-widest block">
                 Your Team's Turn - Round {currentRound}
               </span>
-              <h3 className="text-base font-serif text-[#F3EFE6]">Pick Next Question Number</h3>
+              <h3 className="text-base font-serif text-[#F3EFE6]">Waiting for Question</h3>
               <p className="text-xs text-[#9E978E]">
-                Tap any available question number to start the 60-second timer for both partners
+                The host or team is selecting a question prompt. Stand by...
               </p>
-            </div>
-
-            <div className="grid grid-cols-5 gap-2 max-h-[160px] overflow-y-auto pr-1 pt-1">
-              {filteredQuestions.map((q, idx) => {
-                const isUsed = usedQuestionIds.includes(q.id);
-                return (
-                  <button
-                    key={q.id}
-                    type="button"
-                    onClick={() => handlePlayerPickQuestion(q)}
-                    disabled={isUsed}
-                    className={`py-2.5 rounded-xl text-xs font-mono font-semibold border transition-all ${
-                      isUsed
-                        ? 'bg-[#0F0E0C] text-[#38332C] border-[#1C1A17] cursor-not-allowed line-through'
-                        : 'bg-[#1C1A17] text-[#F3EFE6] border-[#26231E] hover:border-[#D4C3A3] active:scale-95'
-                    }`}
-                  >
-                    Q{idx + 1}
-                  </button>
-                );
-              })}
             </div>
           </div>
         )}

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock, Play, Users, RefreshCw } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 const FALLBACK_QUESTIONS = [
@@ -45,6 +45,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const router = useRouter();
   const roomCodeUpper = resolvedParams?.roomCode ? resolvedParams.roomCode.toUpperCase() : '';
 
+  const [roomStatus, setRoomStatus] = useState<string>('waiting');
   const [couples, setCouples] = useState<any[]>([]);
   const [activeCouple, setActiveCouple] = useState<any | null>(null);
   const [questions, setQuestions] = useState<any[]>(FALLBACK_QUESTIONS);
@@ -107,32 +108,17 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       if (!room) {
         const { data: newRoom } = await supabase
           .from('rooms')
-          .insert({ room_code: roomCodeUpper, current_round: 1, selected_category: 'All' })
+          .insert({ room_code: roomCodeUpper, status: 'waiting', current_round: 1, selected_category: 'All' })
           .select()
           .single();
 
         if (newRoom) {
           room = newRoom;
-          const { data: newCouple } = await supabase
-            .from('couples')
-            .insert({
-              room_id: newRoom.id,
-              team_name: 'Team 1',
-              husband_name: 'Husband',
-              wife_name: 'Wife',
-              total_score: 0
-            })
-            .select()
-            .single();
-
-          if (newCouple) {
-            await supabase.from('rooms').update({ active_couple_id: newCouple.id }).eq('id', newRoom.id);
-            room.active_couple_id = newCouple.id;
-          }
         }
       }
 
       if (room) {
+        setRoomStatus(room.status || 'waiting');
         activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
 
@@ -144,33 +130,13 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
         if (room.current_question_id) {
           const foundQ = activeList.find((q: any) => Number(q.id) === Number(room.current_question_id));
-          if (foundQ) {
-            setCurrentQuestion(foundQ);
-          } else {
-            const { data: remoteQ } = await supabase.from('questions').select('*').eq('id', room.current_question_id).maybeSingle();
-            if (remoteQ) setCurrentQuestion(remoteQ);
-          }
+          if (foundQ) setCurrentQuestion(foundQ);
         }
 
         let { data: couplesData } = await supabase
           .from('couples')
           .select('*')
           .eq('room_id', room.id);
-
-        if (!couplesData || couplesData.length === 0) {
-          const { data: defaultCouple } = await supabase
-            .from('couples')
-            .insert({
-              room_id: room.id,
-              team_name: 'Team 1',
-              husband_name: 'Husband',
-              wife_name: 'Wife',
-              total_score: 0
-            })
-            .select()
-            .single();
-          if (defaultCouple) couplesData = [defaultCouple];
-        }
 
         if (couplesData && couplesData.length > 0) {
           setCouples(couplesData);
@@ -194,6 +160,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .maybeSingle();
 
       if (room) {
+        if (room.status) setRoomStatus(room.status);
         if (room.current_round && room.current_round !== currentRoundRef.current) {
           setCurrentRound(room.current_round);
           setSubmissionsMap({});
@@ -206,41 +173,33 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         if (room.current_question_id) {
           const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
           const foundQ = activePool.find((q) => Number(q.id) === Number(room.current_question_id));
-          if (foundQ) {
-            setCurrentQuestion(foundQ);
-          } else {
-            supabase.from('questions').select('*').eq('id', room.current_question_id).maybeSingle().then(({ data }) => {
-              if (data) setCurrentQuestion(data);
-            });
-          }
+          if (foundQ) setCurrentQuestion(foundQ);
         } else {
           setCurrentQuestion(null);
           setQuestionStartedAt(null);
         }
 
-        if (room.used_question_ids) {
-          setUsedQuestionIds(room.used_question_ids);
-        }
+        if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
 
         const { data: couplesData } = await supabase
           .from('couples')
           .select('*')
           .eq('room_id', room.id);
 
-        if (couplesData && couplesData.length > 0) {
+        if (couplesData) {
           setCouples(couplesData);
           if (room.active_couple_id) {
             const foundCouple = couplesData.find((c) => c.id === room.active_couple_id);
             if (foundCouple) setActiveCouple(foundCouple);
+          } else if (couplesData.length > 0 && !activeCouple) {
+            setActiveCouple(couplesData[0]);
           }
         }
       }
     }, 1000);
 
-    return () => {
-      clearInterval(pollInterval);
-    };
-  }, [roomCodeUpper, fetchSubmissions, questions]);
+    return () => clearInterval(pollInterval);
+  }, [roomCodeUpper, fetchSubmissions, questions, activeCouple, questionStartedAt]);
 
   useEffect(() => {
     if (!questionStartedAt) {
@@ -267,6 +226,39 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleStartGame = async () => {
+    if (couples.length === 0) return;
+    const firstCouple = activeCouple || couples[0];
+    setActiveCouple(firstCouple);
+    setRoomStatus('active');
+
+    const { data: room } = await supabase.from('rooms').select('id').eq('room_code', roomCodeUpper).maybeSingle();
+    if (room) {
+      await supabase
+        .from('rooms')
+        .update({
+          status: 'active',
+          active_couple_id: firstCouple.id,
+        })
+        .eq('id', room.id);
+    }
+  };
+
+  const handleResetToLobby = async () => {
+    setRoomStatus('waiting');
+    setCurrentQuestion(null);
+    setQuestionStartedAt(null);
+    await supabase
+      .from('rooms')
+      .update({
+        status: 'waiting',
+        current_question_id: null,
+        question_started_at: null,
+        current_round: 1,
+      })
+      .eq('room_code', roomCodeUpper);
+  };
+
   const handleSelectActiveCouple = async (couple: any) => {
     setActiveCouple(couple);
     await supabase
@@ -279,7 +271,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
   const handleNextTeam = async () => {
     if (couples.length === 0) return;
-
     const currentIndex = couples.findIndex((c) => c.id === activeCouple?.id);
     const nextIndex = (currentIndex + 1) % couples.length;
     const nextCouple = couples[nextIndex];
@@ -325,27 +316,19 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   };
 
   const handleEndGameAttempt = async () => {
-    await supabase
-      .from('rooms')
-      .update({ selected_category: 'GAME_OVER' })
-      .eq('room_code', roomCodeUpper);
-
+    await supabase.from('rooms').update({ status: 'GAME_OVER', selected_category: 'GAME_OVER' }).eq('room_code', roomCodeUpper);
     router.push(`/winner/${roomCodeUpper}`);
   };
 
   const filteredQuestions = useMemo(() => {
     const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
-
     if (selectedCategories.includes('All') || selectedCategories.length === 0) {
       return getShuffledQuestions(activePool, roomCodeUpper);
     }
-
     const matched = activePool.filter((q) => 
       selectedCategories.some(cat => q.category?.trim().toLowerCase() === cat.trim().toLowerCase())
     );
-
-    const baseToUse = matched.length > 0 ? matched : activePool;
-    return getShuffledQuestions(baseToUse, roomCodeUpper);
+    return getShuffledQuestions(matched.length > 0 ? matched : activePool, roomCodeUpper);
   }, [questions, selectedCategories, roomCodeUpper]);
 
   const currentQuestionNumber = useMemo(() => {
@@ -356,7 +339,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
   const handlePickQuestion = async (q: any) => {
     if (usedQuestionIds.includes(q.id)) return;
-
     const newUsed = [...usedQuestionIds, q.id];
     const nowIso = new Date().toISOString();
     setCurrentQuestion(q);
@@ -377,37 +359,22 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const handleClearQuestion = async () => {
     setCurrentQuestion(null);
     setQuestionStartedAt(null);
-    await supabase
-      .from('rooms')
-      .update({ current_question_id: null, question_started_at: null })
-      .eq('room_code', roomCodeUpper);
+    await supabase.from('rooms').update({ current_question_id: null, question_started_at: null }).eq('room_code', roomCodeUpper);
   };
 
   const toggleUnmask = async (spouse: 'wife' | 'husband') => {
     if (!activeCouple || !activeSubmission) return;
-
     const field = spouse === 'wife' ? 'wife_unmasked' : 'husband_unmasked';
     const currentVal = activeSubmission[field] || false;
     const updatedValue = !currentVal;
 
-    // 1. Optimistically update local state immediately
     const updatedSub = { ...activeSubmission, [field]: updatedValue };
     setSubmissionsMap((prev) => ({ ...prev, [activeCouple.id]: updatedSub }));
-
-    // 2. Push update to Supabase and immediately fetch fresh state to prevent poll flickering
-    const { error } = await supabase
-      .from('submissions')
-      .update({ [field]: updatedValue })
-      .eq('id', activeSubmission.id);
-
-    if (!error) {
-      await fetchSubmissions(currentRound);
-    }
+    await supabase.from('submissions').update({ [field]: updatedValue }).eq('id', activeSubmission.id);
   };
 
   const awardPoints = async (spouse: 'wife' | 'husband', points: number) => {
     if (!activeCouple || !activeSubmission) return;
-
     const scoreField = spouse === 'wife' ? 'wife_score' : 'husband_score';
     const currentSpouseScore = Number(activeSubmission[scoreField] || 0);
     const scoreDiff = points - currentSpouseScore;
@@ -416,15 +383,109 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     setSubmissionsMap((prev) => ({ ...prev, [activeCouple.id]: updatedSub }));
 
     const newTotal = Number(activeCouple.total_score || 0) + scoreDiff;
-    setCouples((prev) =>
-      prev.map((c) => (c.id === activeCouple.id ? { ...c, total_score: newTotal } : c))
-    );
+    setCouples((prev) => prev.map((c) => (c.id === activeCouple.id ? { ...c, total_score: newTotal } : c)));
     setActiveCouple((prev: any) => (prev ? { ...prev, total_score: newTotal } : prev));
 
     await supabase.from('submissions').update({ [scoreField]: points }).eq('id', activeSubmission.id);
     await supabase.from('couples').update({ total_score: newTotal }).eq('id', activeCouple.id);
   };
 
+  // --- WAITING LOBBY VIEW ---
+  if (roomStatus === 'waiting') {
+    return (
+      <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] p-6 lg:p-12 font-sans flex flex-col items-center justify-center">
+        <div className="max-w-2xl w-full bg-[#161412] border border-[#26231E] rounded-3xl p-8 space-y-8 shadow-2xl text-center">
+          <div className="space-y-2">
+            <span className="text-xs font-mono uppercase tracking-widest text-[#D4C3A3] bg-[#26231E] px-3 py-1 rounded-full border border-[#302B25]">
+              Pre-Game Waiting Lobby
+            </span>
+            <h1 className="text-3xl font-serif font-normal text-[#F3EFE6]">Room Code: {roomCodeUpper}</h1>
+            <p className="text-xs text-[#9E978E]">
+              Players can scan the QR code or use the link below to join and register their teams.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-4 bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl">
+            <button
+              onClick={handleCopyPlayerLink}
+              className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-sm"
+            >
+              {copied ? <Check className="w-4 h-4 text-[#86EFAC]" /> : <Copy className="w-4 h-4" />}
+              {copied ? 'Link Copied!' : 'Copy Player Link'}
+            </button>
+            <button
+              onClick={() => setShowQrModal(true)}
+              className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-sm"
+            >
+              <QrCode className="w-4 h-4" /> Show QR Code
+            </button>
+          </div>
+
+          <div className="space-y-3 text-left">
+            <div className="flex items-center justify-between border-b border-[#26231E] pb-2">
+              <span className="text-xs font-mono uppercase tracking-wider text-[#9E978E] flex items-center gap-2">
+                <Users className="w-4 h-4 text-[#D4C3A3]" /> Connected Couples ({couples.length})
+              </span>
+            </div>
+            {couples.length > 0 ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[220px] overflow-y-auto pr-1">
+                {couples.map((c, i) => {
+                  const isComplete = c.husband_name && c.wife_name;
+                  return (
+                    <div key={c.id} className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-semibold text-[#F3EFE6] block">
+                          {i + 1}. Team: {c.team_name}
+                        </span>
+                        <span className="text-[11px] text-[#9E978E] block mt-0.5">
+                          Husband: {c.husband_name || '(Waiting...)'}
+                        </span>
+                        <span className="text-[11px] text-[#9E978E] block">
+                          Wife: {c.wife_name || '(Waiting...)'}
+                        </span>
+                      </div>
+                      <span className={`w-2.5 h-2.5 rounded-full ${isComplete ? 'bg-[#86EFAC]' : 'bg-amber-400 animate-pulse'}`} title={isComplete ? 'Ready' : 'Waiting for partner'} />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="bg-[#0F0E0C] border border-[#26231E] p-8 rounded-2xl text-center space-y-2">
+                <p className="text-xs text-[#9E978E] animate-pulse">Waiting for couples to join from their phones...</p>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleStartGame}
+            disabled={couples.length === 0}
+            className="w-full bg-[#D4C3A3] hover:bg-[#E2DDD0] disabled:opacity-40 text-[#0F0E0C] font-semibold py-4 rounded-2xl text-sm flex items-center justify-center gap-2 transition-all shadow-lg cursor-pointer"
+          >
+            <Play className="w-4 h-4 fill-current" /> Start Game & Begin Round 1
+          </button>
+        </div>
+
+        {showQrModal && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-[#161412] border border-[#26231E] rounded-3xl p-8 max-w-sm w-full text-center space-y-6 shadow-2xl relative">
+              <button onClick={() => setShowQrModal(false)} className="absolute top-4 right-4 bg-[#1C1A17] text-[#9E978E] hover:text-[#F3EFE6] p-2 rounded-full">
+                <X className="w-4 h-4" />
+              </button>
+              <h2 className="text-xl font-serif text-[#F3EFE6]">Scan to Join Lobby</h2>
+              <div className="bg-white p-4 rounded-2xl inline-block shadow-lg">
+                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(playerLink)}`} alt="QR" className="w-48 h-48 mx-auto" />
+              </div>
+              <button onClick={handleCopyPlayerLink} className="w-full bg-[#F3EFE6] text-[#0F0E0C] font-semibold py-3 rounded-xl text-xs">
+                Copy Player Link
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // --- ACTIVE GAMEPLAY VIEW ---
   return (
     <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] p-6 lg:p-10 font-sans grid grid-cols-1 lg:grid-cols-4 gap-6 relative">
       <div className="lg:col-span-3 flex flex-col gap-6">
@@ -433,39 +494,31 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             <div className="w-2.5 h-2.5 rounded-full bg-[#D4C3A3]" />
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-[11px] uppercase tracking-widest text-[#9E978E] font-medium block">
-                  Room Code & Sharing
-                </span>
+                <span className="text-[11px] uppercase tracking-widest text-[#9E978E] font-medium block">Room Code & Sharing</span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-[#26231E] text-[#D4C3A3] border border-[#302B25] flex items-center gap-1">
                   <Layers className="w-3 h-3" /> Round {currentRound}
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2.5 mt-1">
-                <h1 className="text-xl font-mono tracking-wider font-semibold text-[#F3EFE6]">
-                  {roomCodeUpper}
-                </h1>
-                <button
-                  onClick={handleCopyPlayerLink}
-                  className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
-                >
-                  {copied ? <Check className="w-3.5 h-3.5 text-[#86EFAC]" /> : <Copy className="w-3.5 h-3.5" />}
-                  {copied ? 'Link Copied!' : 'Copy Link'}
-                </button>
-                <button
-                  onClick={() => setShowQrModal(true)}
-                  className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-3 py-1.5 rounded-xl flex items-center gap-1.5 transition-all shadow-sm"
-                >
-                  <QrCode className="w-3.5 h-3.5" /> Show QR Code
+                <h1 className="text-xl font-mono tracking-wider font-semibold text-[#F3EFE6]">{roomCodeUpper}</h1>
+                <button onClick={handleCopyPlayerLink} className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                  {copied ? <Check className="w-3.5 h-3.5 text-[#86EFAC]" /> : <Copy className="w-3.5 h-3.5" />} {copied ? 'Link Copied!' : 'Copy Link'}
                 </button>
               </div>
             </div>
           </div>
-          <button
-            onClick={handleEndGameAttempt}
-            className="bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold px-4 py-2 rounded-full text-xs flex items-center gap-2 transition-all shadow-sm"
-          >
-            <Trophy className="w-3.5 h-3.5" /> End Match & Results
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleResetToLobby}
+              className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] font-semibold px-3 py-2 rounded-full text-xs flex items-center gap-1.5 transition-all shadow-sm"
+              title="Return to waiting lobby"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Back to Lobby
+            </button>
+            <button onClick={handleEndGameAttempt} className="bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold px-4 py-2 rounded-full text-xs flex items-center gap-2">
+              <Trophy className="w-3.5 h-3.5" /> End Match & Results
+            </button>
+          </div>
         </div>
 
         <div className="bg-[#161412] border border-[#26231E] p-8 rounded-2xl text-center space-y-3 min-h-[160px] flex flex-col justify-center items-center relative">
@@ -476,31 +529,18 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
                 <span>{timeLeft}s remaining</span>
               </div>
               <div className="flex items-center justify-center gap-2">
-                <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-[#D4C3A3] text-[#0F0E0C] font-bold">
-                  Q{currentQuestionNumber || '?'}
-                </span>
-                <span className="text-[11px] font-mono uppercase tracking-widest text-[#D4C3A3]">
-                  {currentQuestion.category} - Round {currentRound}
-                </span>
+                <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-[#D4C3A3] text-[#0F0E0C] font-bold">Q{currentQuestionNumber || '?'}</span>
+                <span className="text-[11px] font-mono uppercase tracking-widest text-[#D4C3A3]">{currentQuestion.category} - Round {currentRound}</span>
               </div>
-              <h2 className="text-2xl sm:text-3xl font-serif text-[#F3EFE6] leading-relaxed max-w-2xl font-normal">
-                "{currentQuestion.question_text}"
-              </h2>
-              <button
-                onClick={handleClearQuestion}
-                className="mt-2 text-xs text-[#9E978E] hover:text-[#F3EFE6] flex items-center gap-1 font-mono"
-              >
+              <h2 className="text-2xl sm:text-3xl font-serif text-[#F3EFE6] leading-relaxed max-w-2xl font-normal">"{currentQuestion.question_text}"</h2>
+              <button onClick={handleClearQuestion} className="mt-2 text-xs text-[#9E978E] hover:text-[#F3EFE6] flex items-center gap-1 font-mono">
                 <RotateCcw className="w-3 h-3" /> Clear & Select New Question
               </button>
             </>
           ) : (
             <div className="space-y-1">
-              <span className="text-xs font-mono uppercase text-[#6B645B] tracking-widest">
-                No Question Active
-              </span>
-              <p className="text-base font-serif text-[#9E978E]">
-                Select a question number below (or let the active team pick on their phone)
-              </p>
+              <span className="text-xs font-mono uppercase text-[#6B645B] tracking-widest">No Question Active</span>
+              <p className="text-base font-serif text-[#9E978E]">Select a question number below (or let the active team pick on their phone)</p>
             </div>
           )}
         </div>
@@ -509,31 +549,21 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#26231E] pb-3">
             <div className="flex items-center gap-2">
               <Grid className="w-4 h-4 text-[#D4C3A3]" />
-              <span className="text-xs uppercase tracking-wider font-semibold text-[#F3EFE6]">
-                Select Question Number
-              </span>
+              <span className="text-xs uppercase tracking-wider font-semibold text-[#F3EFE6]">Select Question Number</span>
             </div>
-            <span className="text-xs font-mono text-[#D4C3A3]">
-              Categories: {selectedCategories.join(', ')} ({filteredQuestions.length} Total)
-            </span>
+            <span className="text-xs font-mono text-[#D4C3A3]">Categories: {selectedCategories.join(', ')} ({filteredQuestions.length} Total)</span>
           </div>
-
           <div className="grid grid-cols-6 sm:grid-cols-10 md:grid-cols-12 gap-2 max-h-[180px] overflow-y-auto pr-1">
             {filteredQuestions.map((q, idx) => {
               const isUsed = usedQuestionIds.includes(q.id);
               const isActive = currentQuestion?.id === q.id;
-
               return (
                 <button
                   key={q.id}
                   onClick={() => handlePickQuestion(q)}
                   disabled={isUsed}
                   className={`py-2 rounded-xl text-xs font-mono font-semibold transition-all border ${
-                    isActive
-                      ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]'
-                      : isUsed
-                      ? 'bg-[#0F0E0C] text-[#38332C] border-[#1C1A17] cursor-not-allowed line-through'
-                      : 'bg-[#1C1A17] text-[#F3EFE6] border border-[#26231E] hover:border-[#D4C3A3]'
+                    isActive ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : isUsed ? 'bg-[#0F0E0C] text-[#38332C] border-[#1C1A17] cursor-not-allowed line-through' : 'bg-[#1C1A17] text-[#F3EFE6] border border-[#26231E] hover:border-[#D4C3A3]'
                   }`}
                 >
                   Q{idx + 1}
@@ -547,28 +577,17 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           <div className="flex items-center gap-2">
             <UserCheck className="w-4 h-4 text-[#D4C3A3]" />
             <div>
-              <span className="text-[10px] text-[#9E978E] uppercase tracking-wider font-medium block">
-                Round {currentRound} Status ({completedTeamsCount}/{couples.length} Teams Answered):
-              </span>
-              <span className="text-sm font-serif font-bold text-[#D4C3A3]">
-                Active: {activeCouple?.team_name} ({activeCouple?.husband_name} & {activeCouple?.wife_name})
-              </span>
+              <span className="text-[10px] text-[#9E978E] uppercase tracking-wider font-medium block">Round {currentRound} Status ({completedTeamsCount}/{couples.length} Teams Answered):</span>
+              <span className="text-sm font-serif font-bold text-[#D4C3A3]">Active: {activeCouple?.team_name} ({activeCouple?.husband_name} & {activeCouple?.wife_name})</span>
             </div>
           </div>
-
           <div className="flex items-center gap-2">
             {isRoundComplete ? (
-              <button
-                onClick={handleAdvanceRound}
-                className="bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md animate-pulse"
-              >
+              <button onClick={handleAdvanceRound} className="bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md animate-pulse">
                 <Layers className="w-3.5 h-3.5" /> Start Round {currentRound + 1}
               </button>
             ) : (
-              <button
-                onClick={handleNextTeam}
-                className="font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C]"
-              >
+              <button onClick={handleNextTeam} className="font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C]">
                 Next Team <SkipForward className="w-3.5 h-3.5" />
               </button>
             )}
@@ -580,71 +599,25 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           <div className="bg-[#161412] border border-[#26231E] p-6 rounded-2xl flex flex-col justify-between space-y-6">
             <div className="flex justify-between items-center border-b border-[#26231E] pb-3">
               <div>
-                <span className="text-xs uppercase tracking-wider font-semibold text-[#D4C3A3] block">
-                  {activeCouple?.wife_name || 'Wife'}'s Guess
-                </span>
-                <span className="text-[10px] text-[#6B645B] font-mono">
-                  Team: {activeCouple?.team_name}
-                </span>
+                <span className="text-xs uppercase tracking-wider font-semibold text-[#D4C3A3] block">{activeCouple?.wife_name || 'Wife'}'s Guess</span>
+                <span className="text-[10px] text-[#6B645B] font-mono">Team: {activeCouple?.team_name}</span>
               </div>
-              <span
-                className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full ${
-                  activeSubmission?.wife_answer
-                    ? 'bg-[#1C231B] text-[#86EFAC] border border-[#273B25]'
-                    : 'bg-[#1C1A17] text-[#6B645B]'
-                }`}
-              >
+              <span className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full ${activeSubmission?.wife_answer ? 'bg-[#1C231B] text-[#86EFAC] border border-[#273B25]' : 'bg-[#1C1A17] text-[#6B645B]'}`}>
                 {activeSubmission?.wife_answer ? 'Received' : 'Waiting'}
               </span>
             </div>
-
             <div className="bg-[#0F0E0C] border border-[#26231E] p-6 rounded-xl min-h-[100px] flex items-center justify-center text-center">
-              {activeSubmission?.wife_unmasked ? (
-                <p className="text-xl font-serif text-[#F3EFE6]">{activeSubmission.wife_answer}</p>
-              ) : (
-                <p className="text-[#6B645B] text-xs italic flex items-center gap-2">
-                  <EyeOff className="w-4 h-4" /> Hidden
-                </p>
-              )}
+              {activeSubmission?.wife_unmasked ? <p className="text-xl font-serif text-[#F3EFE6]">{activeSubmission.wife_answer}</p> : <p className="text-[#6B645B] text-xs italic flex items-center gap-2"><EyeOff className="w-4 h-4" /> Hidden</p>}
             </div>
-
             <div className="space-y-2">
-              <button
-                onClick={() => toggleUnmask('wife')}
-                disabled={!activeSubmission?.wife_answer}
-                className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#26231E] disabled:opacity-40 text-[#F3EFE6] font-medium py-2 rounded-xl text-xs flex items-center justify-center gap-2 transition-all"
-              >
-                {activeSubmission?.wife_unmasked ? (
-                  <>
-                    <EyeOff className="w-3.5 h-3.5" /> Hide
-                  </>
-                ) : (
-                  <>
-                    <Eye className="w-3.5 h-3.5" /> Reveal
-                  </>
-                )}
+              <button onClick={() => toggleUnmask('wife')} disabled={!activeSubmission?.wife_answer} className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#26231E] disabled:opacity-40 text-[#F3EFE6] font-medium py-2 rounded-xl text-xs flex items-center justify-center gap-2">
+                {activeSubmission?.wife_unmasked ? <><EyeOff className="w-3.5 h-3.5" /> Hide</> : <><Eye className="w-3.5 h-3.5" /> Reveal</>}
               </button>
               <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => awardPoints('wife', 5)}
-                  disabled={!activeSubmission?.wife_answer}
-                  className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 transition-all ${
-                    activeSubmission?.wife_score === 5
-                      ? 'bg-[#D4C3A3] text-[#0F0E0C]'
-                      : 'bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C] disabled:opacity-40'
-                  }`}
-                >
+                <button onClick={() => awardPoints('wife', 5)} disabled={!activeSubmission?.wife_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 ${activeSubmission?.wife_score === 5 ? 'bg-[#D4C3A3] text-[#0F0E0C]' : 'bg-[#F3EFE6] text-[#0F0E0C] disabled:opacity-40'}`}>
                   <Check className="w-3.5 h-3.5" /> Match (+5)
                 </button>
-                <button
-                  onClick={() => awardPoints('wife', 0)}
-                  disabled={!activeSubmission?.wife_answer}
-                  className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 border transition-all ${
-                    activeSubmission?.wife_score === 0 && activeSubmission?.wife_unmasked
-                      ? 'bg-[#281A1A] border-[#EF4444] text-[#EF4444]'
-                      : 'bg-[#1C1A17] hover:bg-[#282420] text-[#9E978E] border-[#26231E] disabled:opacity-40'
-                  }`}
-                >
+                <button onClick={() => awardPoints('wife', 0)} disabled={!activeSubmission?.wife_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 border ${activeSubmission?.wife_score === 0 && activeSubmission?.wife_unmasked ? 'bg-[#281A1A] border-[#EF4444] text-[#EF4444]' : 'bg-[#1C1A17] text-[#9E978E] border-[#26231E] disabled:opacity-40'}`}>
                   <X className="w-3.5 h-3.5" /> Miss (0)
                 </button>
               </div>
@@ -655,71 +628,25 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           <div className="bg-[#161412] border border-[#26231E] p-6 rounded-2xl flex flex-col justify-between space-y-6">
             <div className="flex justify-between items-center border-b border-[#26231E] pb-3">
               <div>
-                <span className="text-xs uppercase tracking-wider font-semibold text-[#D4C3A3] block">
-                  {activeCouple?.husband_name || 'Husband'}'s Guess
-                </span>
-                <span className="text-[10px] text-[#6B645B] font-mono">
-                  Team: {activeCouple?.team_name}
-                </span>
+                <span className="text-xs uppercase tracking-wider font-semibold text-[#D4C3A3] block">{activeCouple?.husband_name || 'Husband'}'s Guess</span>
+                <span className="text-[10px] text-[#6B645B] font-mono">Team: {activeCouple?.team_name}</span>
               </div>
-              <span
-                className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full ${
-                  activeSubmission?.husband_answer
-                    ? 'bg-[#1C231B] text-[#86EFAC] border border-[#273B25]'
-                    : 'bg-[#1C1A17] text-[#6B645B]'
-                }`}
-              >
+              <span className={`text-[11px] font-mono px-2.5 py-0.5 rounded-full ${activeSubmission?.husband_answer ? 'bg-[#1C231B] text-[#86EFAC] border border-[#273B25]' : 'bg-[#1C1A17] text-[#6B645B]'}`}>
                 {activeSubmission?.husband_answer ? 'Received' : 'Waiting'}
               </span>
             </div>
-
             <div className="bg-[#0F0E0C] border border-[#26231E] p-6 rounded-xl min-h-[100px] flex items-center justify-center text-center">
-              {activeSubmission?.husband_unmasked ? (
-                <p className="text-xl font-serif text-[#F3EFE6]">{activeSubmission.husband_answer}</p>
-              ) : (
-                <p className="text-[#6B645B] text-xs italic flex items-center gap-2">
-                  <EyeOff className="w-4 h-4" /> Hidden
-                </p>
-              )}
+              {activeSubmission?.husband_unmasked ? <p className="text-xl font-serif text-[#F3EFE6]">{activeSubmission.husband_answer}</p> : <p className="text-[#6B645B] text-xs italic flex items-center gap-2"><EyeOff className="w-4 h-4" /> Hidden</p>}
             </div>
-
             <div className="space-y-2">
-              <button
-                onClick={() => toggleUnmask('husband')}
-                disabled={!activeSubmission?.husband_answer}
-                className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#26231E] disabled:opacity-40 text-[#F3EFE6] font-medium py-2 rounded-xl text-xs flex items-center justify-center gap-2 transition-all"
-              >
-                {activeSubmission?.husband_unmasked ? (
-                  <>
-                    <EyeOff className="w-3.5 h-3.5" /> Hide
-                  </>
-                ) : (
-                  <>
-                    <Eye className="w-3.5 h-3.5" /> Reveal
-                  </>
-                )}
+              <button onClick={() => toggleUnmask('husband')} disabled={!activeSubmission?.husband_answer} className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#26231E] disabled:opacity-40 text-[#F3EFE6] font-medium py-2 rounded-xl text-xs flex items-center justify-center gap-2">
+                {activeSubmission?.husband_unmasked ? <><EyeOff className="w-3.5 h-3.5" /> Hide</> : <><Eye className="w-3.5 h-3.5" /> Reveal</>}
               </button>
               <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => awardPoints('husband', 5)}
-                  disabled={!activeSubmission?.husband_answer}
-                  className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 transition-all ${
-                    activeSubmission?.husband_score === 5
-                      ? 'bg-[#D4C3A3] text-[#0F0E0C]'
-                      : 'bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C] disabled:opacity-40'
-                  }`}
-                >
+                <button onClick={() => awardPoints('husband', 5)} disabled={!activeSubmission?.husband_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 ${activeSubmission?.husband_score === 5 ? 'bg-[#D4C3A3] text-[#0F0E0C]' : 'bg-[#F3EFE6] text-[#0F0E0C] disabled:opacity-40'}`}>
                   <Check className="w-3.5 h-3.5" /> Match (+5)
                 </button>
-                <button
-                  onClick={() => awardPoints('husband', 0)}
-                  disabled={!activeSubmission?.husband_answer}
-                  className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 border transition-all ${
-                    activeSubmission?.husband_score === 0 && activeSubmission?.husband_unmasked
-                      ? 'bg-[#281A1A] border-[#EF4444] text-[#EF4444]'
-                      : 'bg-[#1C1A17] hover:bg-[#282420] text-[#9E978E] border-[#26231E] disabled:opacity-40'
-                  }`}
-                >
+                <button onClick={() => awardPoints('husband', 0)} disabled={!activeSubmission?.husband_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 border ${activeSubmission?.husband_score === 0 && activeSubmission?.husband_unmasked ? 'bg-[#281A1A] border-[#EF4444] text-[#EF4444]' : 'bg-[#1C1A17] text-[#9E978E] border-[#26231E] disabled:opacity-40'}`}>
                   <X className="w-3.5 h-3.5" /> Miss (0)
                 </button>
               </div>
@@ -731,108 +658,37 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       <div className="bg-[#161412] border border-[#26231E] rounded-2xl p-6 flex flex-col justify-between space-y-6">
         <div className="space-y-4">
           <div className="flex items-center justify-between border-b border-[#26231E] pb-3">
-            <span className="text-xs uppercase tracking-wider font-semibold text-[#9E978E]">
-              Standings & Selection
-            </span>
+            <span className="text-xs uppercase tracking-wider font-semibold text-[#9E978E]">Standings & Selection</span>
             <Trophy className="w-4 h-4 text-[#D4C3A3]" />
           </div>
-
           <div className="space-y-2.5">
             {couples.map((couple, index) => {
               const isSelected = activeCouple?.id === couple.id;
               const sub = submissionsMap[couple.id];
               const hasAnsweredThisRound = sub && (sub.wife_answer || sub.husband_answer);
-
               return (
                 <div
                   key={couple.id}
                   onClick={() => handleSelectActiveCouple(couple)}
-                  className={`p-3.5 rounded-xl border transition-all cursor-pointer relative ${
-                    isSelected
-                      ? 'bg-[#26231E] border-[#D4C3A3] ring-1 ring-[#D4C3A3]/40'
-                      : 'bg-[#0F0E0C] border-[#26231E] hover:border-[#302B25]'
-                  }`}
+                  className={`p-3.5 rounded-xl border transition-all cursor-pointer relative ${isSelected ? 'bg-[#26231E] border-[#D4C3A3] ring-1 ring-[#D4C3A3]/40' : 'bg-[#0F0E0C] border-[#26231E] hover:border-[#302B25]'}`}
                 >
                   <div className="flex justify-between items-center mb-1">
                     <div className="flex items-center gap-1.5">
-                      <span className="font-medium text-xs text-[#F3EFE6]">
-                        {index + 1}. {couple.team_name}
-                      </span>
-                      {hasAnsweredThisRound && (
-                        <span className="text-[9px] font-mono text-[#86EFAC] bg-[#1C231B] border border-[#273B25] px-1.5 py-0.2 rounded">
-                          R{currentRound} Done
-                        </span>
-                      )}
-                      {isSelected && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#D4C3A3]" />
-                      )}
+                      <span className="font-medium text-xs text-[#F3EFE6]">{index + 1}. {couple.team_name}</span>
+                      {hasAnsweredThisRound && <span className="text-[9px] font-mono text-[#86EFAC] bg-[#1C231B] border border-[#273B25] px-1.5 py-0.2 rounded">R{currentRound} Done</span>}
                     </div>
-                    <span className="text-sm font-mono font-semibold text-[#D4C3A3]">
-                      {couple.total_score} pts
-                    </span>
+                    <span className="text-sm font-mono font-semibold text-[#D4C3A3]">{couple.total_score} pts</span>
                   </div>
-                  <p className="text-[11px] text-[#6B645B]">
-                    {couple.husband_name} & {couple.wife_name}
-                  </p>
+                  <p className="text-[11px] text-[#6B645B]">{couple.husband_name || '?'} & {couple.wife_name || '?'}</p>
                 </div>
               );
             })}
           </div>
         </div>
-
-        <button
-          onClick={handleEndGameAttempt}
-          className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] font-semibold py-3.5 rounded-full text-xs flex items-center justify-center gap-2 transition-all shadow-md"
-        >
+        <button onClick={handleEndGameAttempt} className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] font-semibold py-3.5 rounded-full text-xs flex items-center justify-center gap-2">
           <Flag className="w-3.5 h-3.5" /> Finish Game & Declare Winner
         </button>
       </div>
-
-      {showQrModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#161412] border border-[#26231E] rounded-3xl p-8 max-w-sm w-full text-center space-y-6 shadow-2xl relative">
-            <button
-              onClick={() => setShowQrModal(false)}
-              className="absolute top-4 right-4 bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#9E978E] hover:text-[#F3EFE6] p-2 rounded-full transition-all"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <div className="space-y-1">
-              <span className="text-[10px] font-mono uppercase tracking-widest text-[#D4C3A3]">
-                Room Code: {roomCodeUpper}
-              </span>
-              <h2 className="text-xl font-serif text-[#F3EFE6]">Scan to Join Game</h2>
-              <p className="text-xs text-[#9E978E]">
-                Point your phone camera at the code below to join instantly.
-              </p>
-            </div>
-
-            <div className="bg-white p-4 rounded-2xl inline-block shadow-lg">
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(playerLink)}`}
-                alt="Player Join QR Code"
-                className="w-48 h-48 mx-auto"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <p className="text-[11px] font-mono text-[#6B645B] truncate bg-[#0F0E0C] p-2.5 rounded-xl border border-[#26231E]">
-                {playerLink}
-              </p>
-              <button
-                onClick={() => {
-                  handleCopyPlayerLink();
-                }}
-                className="w-full bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold py-3 rounded-xl text-xs flex items-center justify-center gap-2 transition-all shadow-md"
-              >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                {copied ? 'Link Copied to Clipboard!' : 'Copy Player Link'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
