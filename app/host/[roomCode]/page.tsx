@@ -121,12 +121,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         if (newRoom) {
           room = newRoom;
         }
-      } else if (room.status !== 'active' && room.status !== 'GAME_OVER') {
-        await supabase
-          .from('rooms')
-          .update({ status: 'waiting' })
-          .eq('room_code', roomCodeUpper);
-        room.status = 'waiting';
       }
 
       if (room) {
@@ -277,13 +271,17 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     setActiveCouple(firstCouple);
     setRoomStatus('active');
 
-    await supabase
+    const { error } = await supabase
       .from('rooms')
       .update({
         status: 'active',
         active_couple_id: firstCouple.id,
       })
       .eq('room_code', roomCodeUpper);
+
+    if (error) {
+      console.error('Error starting game in Supabase:', error.message);
+    }
   };
 
   const handleResetToLobby = async () => {
