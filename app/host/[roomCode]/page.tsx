@@ -75,7 +75,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     const { data: subData } = await supabase
       .from('submissions')
       .select('*')
-      .eq('room_code', roomCodeUpper)
+      .ilike('room_code', roomCodeUpper)
       .eq('round_number', roundNum);
 
     if (subData) {
@@ -108,31 +108,22 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       let { data: room } = await supabase
         .from('rooms')
         .select('*')
-        .eq('room_code', roomCodeUpper)
+        .ilike('room_code', roomCodeUpper)
         .maybeSingle();
 
       if (!room) {
         const { data: newRoom } = await supabase
           .from('rooms')
-          .insert({ room_code: roomCodeUpper, status: 'waiting', current_round: 1, selected_category: 'All' })
+          .insert({ room_code: roomCodeUpper.toLowerCase(), status: 'waiting', current_round: 1, selected_category: 'All' })
           .select()
           .single();
 
-        if (newRoom) {
-          room = newRoom;
-        }
-      } else {
-        // ALWAYS force status back to 'waiting' when the host page mounts/refreshes
-        await supabase
-          .from('rooms')
-          .update({ status: 'waiting' })
-          .eq('room_code', roomCodeUpper);
-        room.status = 'waiting';
+        room = newRoom;
       }
 
       if (room) {
         setRoomId(room.id);
-        setRoomStatus('waiting');
+        setRoomStatus(room.status || 'waiting');
         activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
 
@@ -170,13 +161,12 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       const { data: room } = await supabase
         .from('rooms')
         .select('*')
-        .eq('room_code', roomCodeUpper)
+        .ilike('room_code', roomCodeUpper)
         .maybeSingle();
 
       if (room) {
-        // Only allow status update from polling if host has started it
-        if (room.status === 'active') {
-          setRoomStatus('active');
+        if (room.status) {
+          setRoomStatus(room.status);
         }
 
         if (room.current_round && room.current_round !== currentRoundRef.current) {
@@ -265,6 +255,8 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       setInputTeamName('');
       setInputHusbandName('');
       setInputWifeName('');
+    } else if (error) {
+      console.error('Error adding couple:', error.message);
     }
   };
 
@@ -274,7 +266,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   };
 
   const handleStartGame = async () => {
-    if (couples.length === 0) return;
+    if (couples.length === 0 || !roomId) return;
     const firstCouple = activeCouple || couples[0];
     setActiveCouple(firstCouple);
     setRoomStatus('active');
@@ -285,7 +277,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         status: 'active',
         active_couple_id: firstCouple.id,
       })
-      .eq('room_code', roomCodeUpper);
+      .eq('id', roomId);
 
     if (error) {
       console.error('Error starting game:', error.message);
@@ -296,29 +288,33 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     setRoomStatus('waiting');
     setCurrentQuestion(null);
     setQuestionStartedAt(null);
-    await supabase
-      .from('rooms')
-      .update({
-        status: 'waiting',
-        current_question_id: null,
-        question_started_at: null,
-        current_round: 1,
-      })
-      .eq('room_code', roomCodeUpper);
+    if (roomId) {
+      await supabase
+        .from('rooms')
+        .update({
+          status: 'waiting',
+          current_question_id: null,
+          question_started_at: null,
+          current_round: 1,
+        })
+        .eq('id', roomId);
+    }
   };
 
   const handleSelectActiveCouple = async (couple: any) => {
     setActiveCouple(couple);
-    await supabase
-      .from('rooms')
-      .update({ active_couple_id: couple.id })
-      .eq('room_code', roomCodeUpper);
+    if (roomId) {
+      await supabase
+        .from('rooms')
+        .update({ active_couple_id: couple.id })
+        .eq('id', roomId);
+    }
   };
 
   const activeSubmission = activeCouple ? submissionsMap[activeCouple.id] : null;
 
   const handleNextTeam = async () => {
-    if (couples.length === 0) return;
+    if (couples.length === 0 || !roomId) return;
     const currentIndex = couples.findIndex((c) => c.id === activeCouple?.id);
     const nextIndex = (currentIndex + 1) % couples.length;
     const nextCouple = couples[nextIndex];
@@ -334,7 +330,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         current_question_id: null,
         question_started_at: null,
       })
-      .eq('room_code', roomCodeUpper);
+      .eq('id', roomId);
   };
 
   const completedTeamsCount = useMemo(() => {
@@ -347,6 +343,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const isRoundComplete = couples.length > 0 && completedTeamsCount >= couples.length;
 
   const handleAdvanceRound = async () => {
+    if (!roomId) return;
     const nextRound = currentRound + 1;
     setCurrentRound(nextRound);
     setSubmissionsMap({});
@@ -360,11 +357,13 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         current_question_id: null,
         question_started_at: null,
       })
-      .eq('room_code', roomCodeUpper);
+      .eq('id', roomId);
   };
 
   const handleEndGameAttempt = async () => {
-    await supabase.from('rooms').update({ status: 'GAME_OVER', selected_category: 'GAME_OVER' }).eq('room_code', roomCodeUpper);
+    if (roomId) {
+      await supabase.from('rooms').update({ status: 'GAME_OVER', selected_category: 'GAME_OVER' }).eq('id', roomId);
+    }
     router.push(`/winner/${roomCodeUpper}`);
   };
 
@@ -386,7 +385,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   }, [currentQuestion, filteredQuestions]);
 
   const handlePickQuestion = async (q: any) => {
-    if (usedQuestionIds.includes(q.id)) return;
+    if (usedQuestionIds.includes(q.id) || !roomId) return;
     const newUsed = [...usedQuestionIds, q.id];
     const nowIso = new Date().toISOString();
     setCurrentQuestion(q);
@@ -401,13 +400,15 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         used_question_ids: newUsed,
         question_started_at: nowIso,
       })
-      .eq('room_code', roomCodeUpper);
+      .eq('id', roomId);
   };
 
   const handleClearQuestion = async () => {
     setCurrentQuestion(null);
     setQuestionStartedAt(null);
-    await supabase.from('rooms').update({ current_question_id: null, question_started_at: null }).eq('room_code', roomCodeUpper);
+    if (roomId) {
+      await supabase.from('rooms').update({ current_question_id: null, question_started_at: null }).eq('id', roomId);
+    }
   };
 
   const toggleUnmask = async (spouse: 'wife' | 'husband') => {
