@@ -115,10 +115,17 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         if (newRoom) {
           room = newRoom;
         }
+      } else {
+        // Force room to start in waiting mode when host dashboard loads
+        await supabase
+          .from('rooms')
+          .update({ status: 'waiting' })
+          .eq('id', room.id);
+        room.status = 'waiting';
       }
 
       if (room) {
-        setRoomStatus(room.status || 'waiting');
+        setRoomStatus('waiting');
         activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
 
@@ -160,7 +167,11 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .maybeSingle();
 
       if (room) {
-        if (room.status) setRoomStatus(room.status);
+        // Only update roomStatus from polling if it's active, allowing the host's "Start Game" click to trigger the transition
+        if (room.status === 'active') {
+          setRoomStatus('active');
+        }
+
         if (room.current_round && room.current_round !== currentRoundRef.current) {
           setCurrentRound(room.current_round);
           setSubmissionsMap({});
