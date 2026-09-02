@@ -45,7 +45,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const router = useRouter();
   const roomCodeUpper = resolvedParams?.roomCode ? resolvedParams.roomCode.toUpperCase() : '';
 
-  // Force local state to start strictly on 'waiting'
   const [roomStatus, setRoomStatus] = useState<string>('waiting');
   const [roomId, setRoomId] = useState<string | null>(null);
   const [couples, setCouples] = useState<any[]>([]);
@@ -63,7 +62,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const [usedQuestionIds, setUsedQuestionIds] = useState<number[]>([]);
   const [submissionsMap, setSubmissionsMap] = useState<Record<string, any>>({});
   
-  // Host input form for adding couples
   const [inputTeamName, setInputTeamName] = useState('');
   const [inputHusbandName, setInputHusbandName] = useState('');
   const [inputWifeName, setInputWifeName] = useState('');
@@ -106,7 +104,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
       setQuestions(activeList);
 
-      // Find room by code
       let { data: room } = await supabase
         .from('rooms')
         .select('*')
@@ -125,14 +122,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
       if (room) {
         setRoomId(room.id);
-        
-        // FOOLPROOF RESET: Force database status to 'waiting' using room.id
-        await supabase
-          .from('rooms')
-          .update({ status: 'waiting' })
-          .eq('id', room.id);
-
-        setRoomStatus('waiting');
+        setRoomStatus(room.status || 'waiting');
         activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
 
@@ -164,18 +154,21 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     fetchGameData();
 
-    // Polling interval (only syncs active status if host triggers it)
     const pollInterval = setInterval(async () => {
-      if (!roomId) return;
+      if (!roomCodeUpper) return;
       await fetchSubmissions(currentRoundRef.current);
 
       const { data: room } = await supabase
         .from('rooms')
         .select('*')
-        .eq('id', roomId)
+        .ilike('room_code', roomCodeUpper)
         .maybeSingle();
 
       if (room) {
+        if (room.status) {
+          setRoomStatus(room.status);
+        }
+
         if (room.current_round && room.current_round !== currentRoundRef.current) {
           setCurrentRound(room.current_round);
           setSubmissionsMap({});
@@ -196,25 +189,27 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
         if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
 
-        const { data: couplesData } = await supabase
-          .from('couples')
-          .select('*')
-          .eq('room_id', roomId);
+        if (room.id) {
+          const { data: couplesData } = await supabase
+            .from('couples')
+            .select('*')
+            .eq('room_id', room.id);
 
-        if (couplesData) {
-          setCouples(couplesData);
-          if (room.active_couple_id) {
-            const foundCouple = couplesData.find((c) => c.id === room.active_couple_id);
-            if (foundCouple) setActiveCouple(foundCouple);
-          } else if (couplesData.length > 0 && !activeCouple) {
-            setActiveCouple(couplesData[0]);
+          if (couplesData) {
+            setCouples(couplesData);
+            if (room.active_couple_id) {
+              const foundCouple = couplesData.find((c) => c.id === room.active_couple_id);
+              if (foundCouple) setActiveCouple(foundCouple);
+            } else if (couplesData.length > 0 && !activeCouple) {
+              setActiveCouple(couplesData[0]);
+            }
           }
         }
       }
     }, 1000);
 
     return () => clearInterval(pollInterval);
-  }, [roomCodeUpper, roomId, fetchSubmissions, questions, activeCouple, questionStartedAt]);
+  }, [roomCodeUpper, questions, activeCouple, questionStartedAt, fetchSubmissions]);
 
   useEffect(() => {
     if (!questionStartedAt) {
@@ -273,57 +268,52 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   };
 
   const handleStartGame = async () => {
-    if (couples.length === 0 || !roomId) return;
+    if (couples.length === 0) return;
     const firstCouple = activeCouple || couples[0];
     setActiveCouple(firstCouple);
-    
-    // Explicitly update database and local state together
+    setRoomStatus('active');
+
+    // Bulletproof update using room_code
     const { error } = await supabase
       .from('rooms')
       .update({
         status: 'active',
         active_couple_id: firstCouple.id,
       })
-      .eq('id', roomId);
+      .ilike('room_code', roomCodeUpper);
 
-    if (!error) {
-      setRoomStatus('active');
-    } else {
+    if (error) {
       console.error('Error starting game:', error.message);
     }
   };
 
   const handleResetToLobby = async () => {
-    if (roomId) {
-      await supabase
-        .from('rooms')
-        .update({
-          status: 'waiting',
-          current_question_id: null,
-          question_started_at: null,
-          current_round: 1,
-        })
-        .eq('id', roomId);
-    }
     setRoomStatus('waiting');
     setCurrentQuestion(null);
     setQuestionStartedAt(null);
+    await supabase
+      .from('rooms')
+      .update({
+        status: 'waiting',
+        current_question_id: null,
+        question_started_at: null,
+        current_round: 1,
+      })
+      .ilike('room_code', roomCodeUpper);
   };
 
   const handleSelectActiveCouple = async (couple: any) => {
     setActiveCouple(couple);
-    if (roomId) {
-      await supabase
-        .from('rooms')
-        .update({ active_couple_id: couple.id })
-        .eq('id', roomId);
-    }
+    await supabase
+      .from('rooms')
+      .update({ active_couple_id: couple.id })
+      .ilike('room_code', roomCodeUpper);
   };
 
   const activeSubmission = activeCouple ? submissionsMap[activeCouple.id] : null;
 
   const handleNextTeam = async () => {
-    if (couples.length === 0 || !roomId) return;
+    if (couples.length === 0) return;
     const currentIndex = couples.findIndex((c) => c.id === activeCouple?.id);
     const nextIndex = (currentIndex + 1) % couples.length;
     const nextCouple = couples[nextIndex];
@@ -339,7 +329,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         current_question_id: null,
         question_started_at: null,
       })
-      .eq('id', roomId);
+      .ilike('room_code', roomCodeUpper);
   };
 
   const completedTeamsCount = useMemo(() => {
@@ -352,7 +342,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const isRoundComplete = couples.length > 0 && completedTeamsCount >= couples.length;
 
   const handleAdvanceRound = async () => {
-    if (!roomId) return;
     const nextRound = currentRound + 1;
     setCurrentRound(nextRound);
     setSubmissionsMap({});
@@ -366,13 +355,11 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         current_question_id: null,
         question_started_at: null,
       })
-      .eq('id', roomId);
+      .ilike('room_code', roomCodeUpper);
   };
 
   const handleEndGameAttempt = async () => {
-    if (roomId) {
-      await supabase.from('rooms').update({ status: 'GAME_OVER', selected_category: 'GAME_OVER' }).eq('id', roomId);
-    }
+    await supabase.from('rooms').update({ status: 'GAME_OVER', selected_category: 'GAME_OVER' }).ilike('room_code', roomCodeUpper);
     router.push(`/winner/${roomCodeUpper}`);
   };
 
@@ -394,7 +381,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   }, [currentQuestion, filteredQuestions]);
 
   const handlePickQuestion = async (q: any) => {
-    if (usedQuestionIds.includes(q.id) || !roomId) return;
+    if (usedQuestionIds.includes(q.id)) return;
     const newUsed = [...usedQuestionIds, q.id];
     const nowIso = new Date().toISOString();
     setCurrentQuestion(q);
@@ -409,15 +396,13 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         used_question_ids: newUsed,
         question_started_at: nowIso,
       })
-      .eq('id', roomId);
+      .ilike('room_code', roomCodeUpper);
   };
 
   const handleClearQuestion = async () => {
     setCurrentQuestion(null);
     setQuestionStartedAt(null);
-    if (roomId) {
-      await supabase.from('rooms').update({ current_question_id: null, question_started_at: null }).eq('id', roomId);
-    }
+    await supabase.from('rooms').update({ current_question_id: null, question_started_at: null }).ilike('room_code', roomCodeUpper);
   };
 
   const toggleUnmask = async (spouse: 'wife' | 'husband') => {
@@ -524,28 +509,37 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             </div>
             {couples.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[200px] overflow-y-auto pr-1">
-                {couples.map((c, i) => (
-                  <div key={c.id} className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl flex items-center justify-between">
-                    <div>
-                      <span className="text-xs font-semibold text-[#F3EFE6] block">
-                        {i + 1}. {c.team_name}
-                      </span>
-                      <span className="text-[11px] text-[#9E978E] block mt-0.5">
-                        Husband: {c.husband_name}
-                      </span>
-                      <span className="text-[11px] text-[#9E978E] block">
-                        Wife: {c.wife_name}
-                      </span>
+                {couples.map((c, i) => {
+                  const sub = submissionsMap[c.id];
+                  const hasJoined = sub !== undefined || c.husband_name || c.wife_name;
+                  return (
+                    <div key={c.id} className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl flex items-center justify-between">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-[#F3EFE6]">
+                            {i + 1}. {c.team_name}
+                          </span>
+                          <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-[#1C231B] text-[#86EFAC] border border-[#273B25]">
+                            Ready in Lobby
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-[#9E978E] block">
+                          Husband: {c.husband_name}
+                        </span>
+                        <span className="text-[11px] text-[#9E978E] block">
+                          Wife: {c.wife_name}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteCouple(c.id)}
+                        className="text-[#6B645B] hover:text-red-400 p-1.5 transition-colors cursor-pointer"
+                        title="Remove team"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
-                    <button
-                      onClick={() => handleDeleteCouple(c.id)}
-                      className="text-[#6B645B] hover:text-red-400 p-1.5 transition-colors cursor-pointer"
-                      title="Remove team"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="bg-[#0F0E0C] border border-[#26231E] p-6 rounded-2xl text-center">
