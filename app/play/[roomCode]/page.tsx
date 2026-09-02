@@ -109,7 +109,6 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           .maybeSingle();
 
         if (roomErr || !roomData) {
-          // Auto-create room if it doesn't exist yet
           const { data: newRoom } = await supabase
             .from('rooms')
             .insert({ room_code: roomCodeUpper, status: 'waiting', current_round: 1, selected_category: 'All' })
@@ -151,7 +150,6 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
 
         if (couplesData) {
           setCouples(couplesData);
-          // If we have saved couple id, refresh our couple object
           const savedCouple = localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
           if (savedCouple) {
             const parsed = JSON.parse(savedCouple);
@@ -172,7 +170,6 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
 
     initRoom();
 
-    // Polling loop for real-time updates
     pollInterval = setInterval(async () => {
       try {
         const { data: roomData } = await supabase
@@ -269,7 +266,6 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     };
   }, [roomCodeUpper, router, currentRound, questions, questionStartedAt, answer, isSubmitted]);
 
-  // Timer countdown
   useEffect(() => {
     if (!questionStartedAt) {
       setTimeLeft(60);
@@ -287,7 +283,6 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     return () => clearInterval(timerInterval);
   }, [questionStartedAt]);
 
-  // Registration handler (supports matching existing team name if partner already started it)
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!teamName.trim() || !myName.trim() || !room) return;
@@ -668,9 +663,9 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
               <span className="text-[10px] font-mono uppercase text-[#D4C3A3] tracking-widest block">
                 Your Team's Turn - Round {currentRound}
               </span>
-              <h3 className="text-base font-serif text-[#F3EFE6]">Waiting for Question</h3>
+              <h3 className="text-base font-serif text-[#F3EFE6]">Waiting for Host to start game</h3>
               <p className="text-xs text-[#9E978E]">
-                The host or team is selecting a question prompt. Stand by...
+                The host is getting the question ready. Stand by...
               </p>
             </div>
           </div>
