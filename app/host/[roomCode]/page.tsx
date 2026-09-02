@@ -45,6 +45,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const router = useRouter();
   const roomCodeUpper = resolvedParams?.roomCode ? resolvedParams.roomCode.toUpperCase() : '';
 
+  // Force local state to start strictly on 'waiting'
   const [roomStatus, setRoomStatus] = useState<string>('waiting');
   const [roomId, setRoomId] = useState<string | null>(null);
   const [couples, setCouples] = useState<any[]>([]);
@@ -105,6 +106,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
       setQuestions(activeList);
 
+      // Find room by code
       let { data: room } = await supabase
         .from('rooms')
         .select('*')
@@ -123,7 +125,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
       if (room) {
         setRoomId(room.id);
-        setRoomStatus(room.status || 'waiting');
+        
+        // FOOLPROOF RESET: Force database status to 'waiting' using room.id
+        await supabase
+          .from('rooms')
+          .update({ status: 'waiting' })
+          .eq('id', room.id);
+
+        setRoomStatus('waiting');
         activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
 
@@ -155,20 +164,18 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     fetchGameData();
 
+    // Polling interval (only syncs active status if host triggers it)
     const pollInterval = setInterval(async () => {
+      if (!roomId) return;
       await fetchSubmissions(currentRoundRef.current);
 
       const { data: room } = await supabase
         .from('rooms')
         .select('*')
-        .ilike('room_code', roomCodeUpper)
+        .eq('id', roomId)
         .maybeSingle();
 
       if (room) {
-        if (room.status) {
-          setRoomStatus(room.status);
-        }
-
         if (room.current_round && room.current_round !== currentRoundRef.current) {
           setCurrentRound(room.current_round);
           setSubmissionsMap({});
@@ -192,7 +199,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         const { data: couplesData } = await supabase
           .from('couples')
           .select('*')
-          .eq('room_id', room.id);
+          .eq('room_id', roomId);
 
         if (couplesData) {
           setCouples(couplesData);
@@ -207,7 +214,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     }, 1000);
 
     return () => clearInterval(pollInterval);
-  }, [roomCodeUpper, fetchSubmissions, questions, activeCouple, questionStartedAt]);
+  }, [roomCodeUpper, roomId, fetchSubmissions, questions, activeCouple, questionStartedAt]);
 
   useEffect(() => {
     if (!questionStartedAt) {
@@ -269,8 +276,8 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     if (couples.length === 0 || !roomId) return;
     const firstCouple = activeCouple || couples[0];
     setActiveCouple(firstCouple);
-    setRoomStatus('active');
-
+    
+    // Explicitly update database and local state together
     const { error } = await supabase
       .from('rooms')
       .update({
@@ -279,15 +286,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       })
       .eq('id', roomId);
 
-    if (error) {
+    if (!error) {
+      setRoomStatus('active');
+    } else {
       console.error('Error starting game:', error.message);
     }
   };
 
   const handleResetToLobby = async () => {
-    setRoomStatus('waiting');
-    setCurrentQuestion(null);
-    setQuestionStartedAt(null);
     if (roomId) {
       await supabase
         .from('rooms')
@@ -299,6 +305,9 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         })
         .eq('id', roomId);
     }
+    setRoomStatus('waiting');
+    setCurrentQuestion(null);
+    setQuestionStartedAt(null);
   };
 
   const handleSelectActiveCouple = async (couple: any) => {
