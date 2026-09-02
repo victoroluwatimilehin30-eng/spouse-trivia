@@ -121,11 +121,18 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         if (newRoom) {
           room = newRoom;
         }
+      } else {
+        // ALWAYS force status back to 'waiting' when the host page mounts/refreshes
+        await supabase
+          .from('rooms')
+          .update({ status: 'waiting' })
+          .eq('room_code', roomCodeUpper);
+        room.status = 'waiting';
       }
 
       if (room) {
         setRoomId(room.id);
-        setRoomStatus(room.status || 'waiting');
+        setRoomStatus('waiting');
         activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
 
@@ -167,8 +174,9 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .maybeSingle();
 
       if (room) {
-        if (room.status) {
-          setRoomStatus(room.status);
+        // Only allow status update from polling if host has started it
+        if (room.status === 'active') {
+          setRoomStatus('active');
         }
 
         if (room.current_round && room.current_round !== currentRoundRef.current) {
@@ -280,7 +288,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       .eq('room_code', roomCodeUpper);
 
     if (error) {
-      console.error('Error starting game in Supabase:', error.message);
+      console.error('Error starting game:', error.message);
     }
   };
 
