@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, use, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, use, useMemo, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock, Play, Users, RefreshCw, Trash2, Plus } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Trophy, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock, Play, Users, RefreshCw, Trash2, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 const FALLBACK_QUESTIONS = [
@@ -20,7 +20,6 @@ const FALLBACK_QUESTIONS = [
 
 function getShuffledQuestions(questionsArray: any[], roomCode: string) {
   if (!roomCode || questionsArray.length === 0) return questionsArray;
-  
   let hash = 0;
   for (let i = 0; i < roomCode.length; i++) {
     hash = (hash << 5) - hash + roomCode.charCodeAt(i);
@@ -31,7 +30,6 @@ function getShuffledQuestions(questionsArray: any[], roomCode: string) {
     seed = (seed * 9301 + 49297) % 233280;
     return seed / 233280;
   };
-
   const arr = [...questionsArray];
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
@@ -45,7 +43,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const router = useRouter();
   const roomCodeUpper = resolvedParams?.roomCode ? resolvedParams.roomCode.toUpperCase() : '';
 
-  // Always start strictly in the waiting lobby on initial load
   const [roomStatus, setRoomStatus] = useState<string>('waiting');
   const [roomId, setRoomId] = useState<string | null>(null);
   const [couples, setCouples] = useState<any[]>([]);
@@ -72,7 +69,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
   useEffect(() => {
     if (!roomCodeUpper) return;
-
     let isMounted = true;
 
     const fetchSubmissionsData = async (roundNum: number) => {
@@ -86,9 +82,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       if (subData) {
         const map: Record<string, any> = {};
         subData.forEach((sub) => {
-          if (sub.couple_id) {
-            map[sub.couple_id] = sub;
-          }
+          if (sub.couple_id) map[sub.couple_id] = sub;
         });
         setSubmissionsMap(map);
       } else {
@@ -97,11 +91,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     };
 
     const fetchGameData = async () => {
-      const { data: qData } = await supabase
-        .from('questions')
-        .select('*')
-        .order('id', { ascending: true });
-
+      const { data: qData } = await supabase.from('questions').select('*').order('id', { ascending: true });
       if (!isMounted) return;
       const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
       setQuestions(activeList);
@@ -118,18 +108,16 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           .insert({ room_code: roomCodeUpper.toLowerCase(), status: 'waiting', current_round: 1, selected_category: 'All' })
           .select()
           .single();
-
         room = newRoom;
       }
 
       if (room && isMounted) {
         setRoomId(room.id);
+        setRoomStatus(room.status || 'waiting');
         const activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
 
-        if (room.selected_category) {
-          setSelectedCategories(room.selected_category.split(','));
-        }
+        if (room.selected_category) setSelectedCategories(room.selected_category.split(','));
         if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
         if (room.question_started_at) setQuestionStartedAt(room.question_started_at);
 
@@ -138,11 +126,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           if (foundQ) setCurrentQuestion(foundQ);
         }
 
-        const { data: couplesData } = await supabase
-          .from('couples')
-          .select('*')
-          .eq('room_id', room.id);
-
+        const { data: couplesData } = await supabase.from('couples').select('*').eq('room_id', room.id);
         if (couplesData && isMounted) {
           setCouples(couplesData);
           const currentActive = couplesData.find((c) => c.id === room.active_couple_id) || couplesData[0];
@@ -155,7 +139,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     fetchGameData();
 
-    // Polling interval (syncs data without forcing host out of the lobby)
     const pollInterval = setInterval(async () => {
       if (!isMounted) return;
       await fetchSubmissionsData(currentRoundRef.current);
@@ -167,9 +150,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .maybeSingle();
 
       if (room && isMounted) {
-        if (room.status === 'GAME_OVER') {
-          setRoomStatus('GAME_OVER');
-        }
+        if (room.status) setRoomStatus(room.status);
 
         if (room.current_round && room.current_round !== currentRoundRef.current) {
           setCurrentRound(room.current_round);
@@ -192,18 +173,12 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
 
         if (room.id) {
-          const { data: couplesData } = await supabase
-            .from('couples')
-            .select('*')
-            .eq('room_id', room.id);
-
+          const { data: couplesData } = await supabase.from('couples').select('*').eq('room_id', room.id);
           if (couplesData && isMounted) {
             setCouples(couplesData);
             if (room.active_couple_id) {
               const foundCouple = couplesData.find((c) => c.id === room.active_couple_id);
               if (foundCouple) setActiveCouple(foundCouple);
-            } else if (couplesData.length > 0 && !activeCouple) {
-              setActiveCouple(couplesData[0]);
             }
           }
         }
@@ -221,7 +196,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       setTimeLeft(60);
       return;
     }
-
     const timerInterval = setInterval(() => {
       const startTime = new Date(questionStartedAt).getTime();
       const now = Date.now();
@@ -262,8 +236,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       setInputTeamName('');
       setInputHusbandName('');
       setInputWifeName('');
-    } else if (error) {
-      console.error('Error adding couple:', error.message);
     }
   };
 
@@ -278,17 +250,13 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     setActiveCouple(firstCouple);
     setRoomStatus('active');
 
-    const { error } = await supabase
+    await supabase
       .from('rooms')
       .update({
         status: 'active',
         active_couple_id: firstCouple.id,
       })
       .ilike('room_code', roomCodeUpper);
-
-    if (error) {
-      console.error('Error starting game:', error.message);
-    }
   };
 
   const handleResetToLobby = async () => {
@@ -384,25 +352,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     return idx !== -1 ? idx + 1 : null;
   }, [currentQuestion, filteredQuestions]);
 
-  const handlePickQuestion = async (q: any) => {
-    if (usedQuestionIds.includes(q.id)) return;
-    const newUsed = [...usedQuestionIds, q.id];
-    const nowIso = new Date().toISOString();
-    setCurrentQuestion(q);
-    setUsedQuestionIds(newUsed);
-    setQuestionStartedAt(nowIso);
-    setTimeLeft(60);
-
-    await supabase
-      .from('rooms')
-      .update({
-        current_question_id: q.id,
-        used_question_ids: newUsed,
-        question_started_at: nowIso,
-      })
-      .ilike('room_code', roomCodeUpper);
-  };
-
   const handleClearQuestion = async () => {
     setCurrentQuestion(null);
     setQuestionStartedAt(null);
@@ -417,6 +366,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     const updatedSub = { ...activeSubmission, [field]: updatedValue };
     setSubmissionsMap((prev) => ({ ...prev, [activeCouple.id]: updatedSub }));
+
     await supabase.from('submissions').update({ [field]: updatedValue }).eq('id', activeSubmission.id);
   };
 
@@ -468,7 +418,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             </button>
           </div>
 
-          {/* Add Couple Form */}
           <form onSubmit={handleAddCouple} className="bg-[#0F0E0C] border border-[#26231E] p-5 rounded-2xl space-y-4 text-left">
             <h2 className="text-xs uppercase font-mono tracking-wider text-[#D4C3A3]">Add Participating Couple</h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -587,7 +536,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     );
   }
 
-  // --- ACTIVE GAMEPLAY VIEW ---
+  // --- ACTIVE GAMEPLAY VIEW (Host watches player choice) ---
   return (
     <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] p-6 lg:p-10 font-sans grid grid-cols-1 lg:grid-cols-4 gap-6 relative">
       <div className="lg:col-span-3 flex flex-col gap-6">
@@ -623,6 +572,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           </div>
         </div>
 
+        {/* Active Question Display (Controlled by active team on mobile) */}
         <div className="bg-[#161412] border border-[#26231E] p-8 rounded-2xl text-center space-y-3 min-h-[160px] flex flex-col justify-center items-center relative">
           {currentQuestion ? (
             <>
@@ -636,43 +586,15 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
               </div>
               <h2 className="text-2xl sm:text-3xl font-serif text-[#F3EFE6] leading-relaxed max-w-2xl font-normal">"{currentQuestion.question_text}"</h2>
               <button onClick={handleClearQuestion} className="mt-2 text-xs text-[#9E978E] hover:text-[#F3EFE6] flex items-center gap-1 font-mono cursor-pointer">
-                <RotateCcw className="w-3 h-3" /> Clear & Select New Question
+                <RotateCcw className="w-3 h-3" /> Clear Active Question
               </button>
             </>
           ) : (
             <div className="space-y-1">
-              <span className="text-xs font-mono uppercase text-[#6B645B] tracking-widest">No Question Active</span>
-              <p className="text-base font-serif text-[#9E978E]">Select a question number below (or let the active team pick on their phone)</p>
+              <span className="text-xs font-mono uppercase text-[#6B645B] tracking-widest">Waiting for Active Team</span>
+              <p className="text-base font-serif text-[#9E978E]">{activeCouple?.team_name} is choosing a question on their phone...</p>
             </div>
           )}
-        </div>
-
-        <div className="bg-[#161412] border border-[#26231E] p-6 rounded-2xl space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#26231E] pb-3">
-            <div className="flex items-center gap-2">
-              <Grid className="w-4 h-4 text-[#D4C3A3]" />
-              <span className="text-xs uppercase tracking-wider font-semibold text-[#F3EFE6]">Select Question Number</span>
-            </div>
-            <span className="text-xs font-mono text-[#D4C3A3]">Categories: {selectedCategories.join(', ')} ({filteredQuestions.length} Total)</span>
-          </div>
-          <div className="grid grid-cols-6 sm:grid-cols-10 md:grid-cols-12 gap-2 max-h-[180px] overflow-y-auto pr-1">
-            {filteredQuestions.map((q, idx) => {
-              const isUsed = usedQuestionIds.includes(q.id);
-              const isActive = currentQuestion?.id === q.id;
-              return (
-                <button
-                  key={q.id}
-                  onClick={() => handlePickQuestion(q)}
-                  disabled={isUsed}
-                  className={`py-2 rounded-xl text-xs font-mono font-semibold transition-all border cursor-pointer ${
-                    isActive ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : isUsed ? 'bg-[#0F0E0C] text-[#38332C] border-[#1C1A17] cursor-not-allowed line-through' : 'bg-[#1C1A17] text-[#F3EFE6] border border-[#26231E] hover:border-[#D4C3A3]'
-                  }`}
-                >
-                  Q{idx + 1}
-                </button>
-              );
-            })}
-          </div>
         </div>
 
         <div className="bg-[#1C1A17] border border-[#D4C3A3]/40 px-6 py-4 rounded-xl flex flex-wrap items-center justify-between gap-4 shadow-lg">
@@ -680,7 +602,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             <UserCheck className="w-4 h-4 text-[#D4C3A3]" />
             <div>
               <span className="text-[10px] text-[#9E978E] uppercase tracking-wider font-medium block">Round {currentRound} Status ({completedTeamsCount}/{couples.length} Teams Answered):</span>
-              <span className="text-sm font-serif font-bold text-[#D4C3A3]">Active: {activeCouple?.team_name} ({activeCouple?.husband_name} & {activeCouple?.wife_name})</span>
+              <span className="text-sm font-serif font-bold text-[#D4C3A3]">Active Team on Stage: {activeCouple?.team_name} ({activeCouple?.husband_name} & {activeCouple?.wife_name})</span>
             </div>
           </div>
           <div className="flex items-center gap-2">

@@ -3,7 +3,7 @@
 import { useState, useEffect, use, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye, Layers, Edit3, Heart } from 'lucide-react';
+import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye, Layers, Edit3, Heart, EyeOff } from 'lucide-react';
 
 const FALLBACK_QUESTIONS = [
   { id: 1, category: 'Habits', question_text: 'What is your spouse absolute favorite comfort food?' },
@@ -20,7 +20,6 @@ const FALLBACK_QUESTIONS = [
 
 function getShuffledQuestions(questionsArray: any[], roomCode: string) {
   if (!roomCode || questionsArray.length === 0) return questionsArray;
-  
   let hash = 0;
   for (let i = 0; i < roomCode.length; i++) {
     hash = (hash << 5) - hash + roomCode.charCodeAt(i);
@@ -31,7 +30,6 @@ function getShuffledQuestions(questionsArray: any[], roomCode: string) {
     seed = (seed * 9301 + 49297) % 233280;
     return seed / 233280;
   };
-
   const arr = [...questionsArray];
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
@@ -45,12 +43,10 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const router = useRouter();
   const roomCodeUpper = resolvedParams?.roomCode ? resolvedParams.roomCode.toUpperCase() : '';
 
-  const [room, setRoom] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [roomError, setRoomError] = useState(false);
   const [couples, setCouples] = useState<any[]>([]);
 
-  // Selection states (Team & Role selection from host setup)
   const [selectedCoupleId, setSelectedCoupleId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       return localStorage.getItem(`player_couple_${roomCodeUpper}`) || '';
@@ -68,7 +64,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const [tempCoupleId, setTempCoupleId] = useState('');
   const [tempSpouseType, setTempSpouseType] = useState<'wife' | 'husband' | null>(null);
 
-  // Gameplay states
+  const [room, setRoom] = useState<any>(null);
   const [questions, setQuestions] = useState<any[]>(FALLBACK_QUESTIONS);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
   const [currentRound, setCurrentRound] = useState<number>(1);
@@ -90,37 +86,22 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     localStorage.setItem(`player_spouse_${roomCodeUpper}`, type);
   };
 
-  // Initialize room and polling
   useEffect(() => {
     if (!roomCodeUpper) return;
-
     let pollInterval: any;
     const safetyTimer = setTimeout(() => setLoading(false), 3000);
 
     const initRoom = async () => {
       try {
-        const { data: qData } = await supabase
-          .from('questions')
-          .select('*')
-          .order('id', { ascending: true });
-
+        const { data: qData } = await supabase.from('questions').select('*').order('id', { ascending: true });
         const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
         setQuestions(activeList);
 
-        let { data: roomData, error: roomErr } = await supabase
+        let { data: roomData } = await supabase
           .from('rooms')
           .select('*')
-          .eq('room_code', roomCodeUpper)
+          .ilike('room_code', roomCodeUpper)
           .maybeSingle();
-
-        if (roomErr || !roomData) {
-          const { data: newRoom } = await supabase
-            .from('rooms')
-            .insert({ room_code: roomCodeUpper, status: 'waiting', current_round: 1, selected_category: 'All' })
-            .select()
-            .single();
-          roomData = newRoom;
-        }
 
         if (!roomData) {
           setRoomError(true);
@@ -174,7 +155,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
         const { data: roomData } = await supabase
           .from('rooms')
           .select('*')
-          .eq('room_code', roomCodeUpper)
+          .ilike('room_code', roomCodeUpper)
           .maybeSingle();
 
         if (roomData) {
@@ -213,9 +194,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
             .eq('room_id', roomData.id)
             .order('total_score', { ascending: false });
 
-          if (couplesData) {
-            setCouples(couplesData);
-          }
+          if (couplesData) setCouples(couplesData);
         }
 
         const currentCoupleId = localStorage.getItem(`player_couple_${roomCodeUpper}`);
@@ -225,7 +204,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           const { data: allSubs } = await supabase
             .from('submissions')
             .select('*')
-            .eq('room_code', roomCodeUpper)
+            .ilike('room_code', roomCodeUpper)
             .eq('couple_id', currentCoupleId);
 
           if (allSubs) {
@@ -260,7 +239,6 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
       setTimeLeft(60);
       return;
     }
-
     const timerInterval = setInterval(() => {
       const startTime = new Date(questionStartedAt).getTime();
       const now = Date.now();
@@ -277,23 +255,25 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     if (!answer.trim() || !spouseType || !selectedCoupleId || timeLeft <= 0) return;
 
     const updateField = spouseType === 'wife' ? 'wife_answer' : 'husband_answer';
+    const unmaskField = spouseType === 'wife' ? 'wife_unmasked' : 'husband_unmasked';
 
     const { data: existing } = await supabase
       .from('submissions')
       .select('id')
-      .eq('room_code', roomCodeUpper)
+      .ilike('room_code', roomCodeUpper)
       .eq('couple_id', selectedCoupleId)
       .eq('round_number', currentRound)
       .maybeSingle();
 
     if (existing) {
-      await supabase.from('submissions').update({ [updateField]: answer }).eq('id', existing.id);
+      await supabase.from('submissions').update({ [updateField]: answer.trim() }).eq('id', existing.id);
     } else {
       await supabase.from('submissions').insert({
-        room_code: roomCodeUpper,
+        room_code: roomCodeUpper.toLowerCase(),
         couple_id: selectedCoupleId,
         round_number: currentRound,
-        [updateField]: answer,
+        [updateField]: answer.trim(),
+        [unmaskField]: false,
       });
     }
 
@@ -321,7 +301,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
         active_couple_id: selectedCoupleId,
         question_started_at: nowIso,
       })
-      .eq('room_code', roomCodeUpper);
+      .ilike('room_code', roomCodeUpper);
   };
 
   const filteredQuestions = useMemo(() => {
@@ -365,9 +345,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     );
   }
 
-  // ==========================================
-  // STATE 1: TEAM & ROLE SELECTION (Lobby)
-  // ==========================================
+  // State 1: Team & Role Selection
   if (!spouseType || !selectedCoupleId) {
     return (
       <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-6 font-sans">
@@ -448,9 +426,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     );
   }
 
-  // ==========================================
-  // STATE 2: WAITING FOR HOST TO START
-  // ==========================================
+  // State 2: Waiting for Host to start game
   if (room?.status === 'waiting') {
     const assignedCouple = couples.find(c => c.id === selectedCoupleId);
     return (
@@ -466,7 +442,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           <div className="bg-[#0F0E0C] border border-[#26231E] p-6 rounded-2xl space-y-4 text-center">
             <div className="flex items-center justify-center gap-1.5 text-[#D4C3A3]">
               <Heart className="w-4 h-4 fill-current" />
-              <span className="text-xs font-semibold uppercase tracking-wider">Team: {assignedCouple?.team_name}</span>
+              <span className="text-xs font-semibold uppercase tracking-wider">TEAM: {assignedCouple?.team_name}</span>
             </div>
 
             <div className="space-y-2 text-xs border-t border-b border-[#26231E] py-3 text-left">
@@ -490,9 +466,6 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     );
   }
 
-  // ==========================================
-  // STATE 3: ACTIVE GAMEPLAY & TURN-TAKING
-  // ==========================================
   const renderLiveScoreboard = () => (
     <div className="bg-[#0F0E0C] border border-[#26231E] rounded-xl p-3.5 space-y-3 mt-4 text-left">
       <div className="flex items-center justify-between border-b border-[#26231E] pb-2">
@@ -521,7 +494,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     </div>
   );
 
-  // If it is NOT this team's turn, show waiting for your turn screen
+  // If not my turn
   if (!isMyTurn) {
     return (
       <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-4 font-sans">
@@ -531,11 +504,11 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           </div>
           <div className="space-y-1">
             <span className="text-[10px] font-mono uppercase text-[#D4C3A3] tracking-widest block">
-              Game Started! • Round {currentRound}
+              Game Active • Round {currentRound}
             </span>
             <h2 className="text-lg font-serif text-[#F3EFE6]">Waiting for your turn</h2>
             <p className="text-xs text-[#9E978E] max-w-xs mx-auto leading-relaxed">
-              Another team is currently on stage playing. Please standby for your team's turn in Round {currentRound}...
+              Another team is currently picking and playing. Standby for your team's turn in Round {currentRound}...
             </p>
           </div>
           {renderLiveScoreboard()}
@@ -544,7 +517,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     );
   }
 
-  // If it IS this team's turn, show question selector or active answering view
+  // Active Gameplay / Question Selection
   return (
     <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-4 font-sans">
       <div className="bg-[#161412] border border-[#26231E] rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl">
@@ -585,12 +558,12 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
             {timeLeft === 0 && !isSubmitted ? (
               <div className="py-4 text-center space-y-2 bg-[#281A1A] border border-[#EF4444]/40 rounded-xl">
                 <p className="text-xs font-mono text-[#EF4444] uppercase tracking-wider font-semibold">Time's Up!</p>
-                <p className="text-xs text-[#9E978E]">The 60-second countdown has expired. Waiting for host grading.</p>
+                <p className="text-xs text-[#9E978E]">The 60-second countdown has expired.</p>
               </div>
             ) : !isSubmitted ? (
               <form onSubmit={handleSubmitAnswer} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-[#9E978E]">Your Answer (Editable until timer ends):</label>
+                  <label className="block text-xs font-medium text-[#9E978E]">Your Answer:</label>
                   <textarea
                     value={answer}
                     onChange={(e) => setAnswer(e.target.value)}
@@ -600,7 +573,6 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                     required
                   />
                 </div>
-
                 <button
                   type="submit"
                   className="w-full bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold py-3 rounded-full text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer"
@@ -616,7 +588,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                 <h2 className="text-base font-serif text-[#F3EFE6]">Response Sent</h2>
                 <div className="bg-[#0F0E0C] border border-[#26231E] p-3.5 rounded-xl space-y-1">
                   <span className="text-[10px] text-[#6B645B] font-mono flex items-center justify-center gap-1 uppercase">
-                    {isRevealed ? <Eye className="w-3 h-3 text-[#D4C3A3]" /> : <Lock className="w-3 h-3" />} 
+                    {isRevealed ? <Eye className="w-3 h-3 text-[#D4C3A3]" /> : <Lock className="w-3.5 h-3.5" />} 
                     {isRevealed ? 'Revealed by Host' : 'Hidden from view'}
                   </span>
                   <p className={`font-mono text-xs ${isRevealed ? 'text-[#F3EFE6] text-sm font-serif py-1' : 'text-[#38332C] blur-sm'}`}>
@@ -641,9 +613,9 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
               <span className="text-[10px] font-mono uppercase text-[#D4C3A3] tracking-widest block">
                 Your Team's Turn • Round {currentRound}
               </span>
-              <h3 className="text-base font-serif text-[#F3EFE6]">Pick Next Question Number</h3>
+              <h3 className="text-base font-serif text-[#F3EFE6]">Pick a Question Number</h3>
               <p className="text-xs text-[#9E978E]">
-                Tap any available question number to start the 60-second timer for both partners
+                Tap any available question number below to start the timer for both partners
               </p>
             </div>
 
