@@ -64,7 +64,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
   const [tempCoupleId, setTempCoupleId] = useState('');
   const [tempSpouseType, setTempSpouseType] = useState<'wife' | 'husband' | null>(null);
 
-  const [questions, setQuestions] = useState<any[]>([]);
+  const [questions, setQuestions] = useState<any[]>(FALLBACK_QUESTIONS);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
   const [currentRound, setCurrentRound] = useState<number>(1);
   const [currentQuestion, setCurrentQuestion] = useState<any | null>(null);
@@ -103,11 +103,8 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           .select('*')
           .order('id', { ascending: true });
 
-        if (qData && qData.length > 0) {
-          setQuestions(qData);
-        } else {
-          setQuestions(FALLBACK_QUESTIONS);
-        }
+        const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
+        setQuestions(activeList);
 
         const { data: room, error: roomErr } = await supabase
           .from('rooms')
@@ -127,16 +124,21 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           return;
         }
 
-        if (room.current_round) setCurrentRound(room.current_round);
+        const roundNum = room.current_round || 1;
+        setCurrentRound(roundNum);
         if (room.selected_category) setSelectedCategories(room.selected_category.split(','));
         if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
         if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
         if (room.question_started_at) setQuestionStartedAt(room.question_started_at);
 
         if (room.current_question_id) {
-          const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
-          const found = activeList.find((q) => Number(q.id) === Number(room.current_question_id));
-          if (found) setCurrentQuestion(found);
+          const found = activeList.find((q: any) => Number(q.id) === Number(room.current_question_id));
+          if (found) {
+            setCurrentQuestion(found);
+          } else {
+            const { data: remoteQ } = await supabase.from('questions').select('*').eq('id', room.current_question_id).maybeSingle();
+            if (remoteQ) setCurrentQuestion(remoteQ);
+          }
         }
 
         const { data: couplesData } = await supabase
@@ -148,6 +150,33 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         if (couplesData && couplesData.length > 0) {
           setCouples(couplesData);
           if (!room.active_couple_id) setActiveCoupleId(couplesData[0].id);
+        }
+
+        const currentCoupleId = localStorage.getItem(`player_couple_${roomCodeUpper}`);
+        const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
+
+        if (currentCoupleId && currentSpouse) {
+          const { data: allSubs } = await supabase
+            .from('submissions')
+            .select('*')
+            .eq('room_code', roomCodeUpper)
+            .eq('couple_id', currentCoupleId);
+
+          if (allSubs) {
+            setTeamSubmissionsHistory(allSubs);
+            const currentSub = allSubs.find(s => Number(s.round_number) === Number(roundNum));
+            if (currentSub) {
+              const myField = currentSpouse === 'wife' ? 'wife_answer' : 'husband_answer';
+              if (currentSub[myField]) {
+                setAnswer(currentSub[myField]);
+                setIsSubmitted(true);
+              }
+              const maskField = currentSpouse === 'wife' ? 'wife_unmasked' : 'husband_unmasked';
+              if (currentSub[maskField] !== undefined) {
+                setIsRevealed(currentSub[maskField]);
+              }
+            }
+          }
         }
       } catch (err) {
         console.error('Init error:', err);
@@ -189,8 +218,14 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
           if (room.current_question_id) {
             const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
-            const q = activePool.find(item => Number(item.id) === Number(room.current_question_id));
-            if (q) setCurrentQuestion(q);
+            const q = activePool.find((item: any) => Number(item.id) === Number(room.current_question_id));
+            if (q) {
+              setCurrentQuestion(q);
+            } else {
+              supabase.from('questions').select('*').eq('id', room.current_question_id).maybeSingle().then(({ data }) => {
+                if (data) setCurrentQuestion(data);
+              });
+            }
           } else {
             setCurrentQuestion(null);
             setQuestionStartedAt(null);
@@ -255,9 +290,8 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       clearTimeout(safetyTimer);
       clearInterval(pollInterval);
     };
-  }, [roomCodeUpper, router, currentRound, questions, answer, isSubmitted, questionStartedAt]);
+  }, [roomCodeUpper, router, currentRound, questions]);
 
-  // Live countdown timer handler for players
   useEffect(() => {
     if (!questionStartedAt) {
       setTimeLeft(60);
@@ -282,8 +316,8 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       return getShuffledQuestions(activePool, roomCodeUpper);
     }
 
-    const matched = activePool.filter((q) => 
-      selectedCategories.some(cat => q.category?.trim().toLowerCase() === cat.trim().toLowerCase())
+    const matched = activePool.filter((q: any) => 
+      selectedCategories.some((cat: string) => q.category?.trim().toLowerCase() === cat.trim().toLowerCase())
     );
 
     const baseToUse = matched.length > 0 ? matched : activePool;
@@ -292,7 +326,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
   const currentQuestionNumber = useMemo(() => {
     if (!currentQuestion) return null;
-    const idx = filteredQuestions.findIndex(q => Number(q.id) === Number(currentQuestion.id));
+    const idx = filteredQuestions.findIndex((q: any) => Number(q.id) === Number(currentQuestion.id));
     return idx !== -1 ? idx + 1 : null;
   }, [currentQuestion, filteredQuestions]);
 

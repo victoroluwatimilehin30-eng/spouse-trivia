@@ -47,7 +47,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
   const [couples, setCouples] = useState<any[]>([]);
   const [activeCouple, setActiveCouple] = useState<any | null>(null);
-  const [questions, setQuestions] = useState<any[]>([]);
+  const [questions, setQuestions] = useState<any[]>(FALLBACK_QUESTIONS);
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
   
   const [currentRound, setCurrentRound] = useState<number>(1);
@@ -90,6 +90,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     let activeRoundNum = currentRoundRef.current;
 
     const fetchGameData = async () => {
+      const { data: qData } = await supabase
+        .from('questions')
+        .select('*')
+        .order('id', { ascending: true });
+
+      const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
+      setQuestions(activeList);
+
       let { data: room } = await supabase
         .from('rooms')
         .select('*')
@@ -134,6 +142,16 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
         if (room.question_started_at) setQuestionStartedAt(room.question_started_at);
 
+        if (room.current_question_id) {
+          const foundQ = activeList.find((q: any) => Number(q.id) === Number(room.current_question_id));
+          if (foundQ) {
+            setCurrentQuestion(foundQ);
+          } else {
+            const { data: remoteQ } = await supabase.from('questions').select('*').eq('id', room.current_question_id).maybeSingle();
+            if (remoteQ) setCurrentQuestion(remoteQ);
+          }
+        }
+
         let { data: couplesData } = await supabase
           .from('couples')
           .select('*')
@@ -159,19 +177,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           const currentActive = couplesData.find((c) => c.id === room.active_couple_id) || couplesData[0];
           setActiveCouple(currentActive);
         }
-      }
-
-      const { data: qData } = await supabase
-        .from('questions')
-        .select('*')
-        .order('id', { ascending: true });
-
-      const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
-      setQuestions(activeList);
-
-      if (room?.current_question_id) {
-        const activeQ = activeList.find((q) => Number(q.id) === Number(room.current_question_id));
-        if (activeQ) setCurrentQuestion(activeQ);
       }
 
       await fetchSubmissions(activeRoundNum);
@@ -201,7 +206,13 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         if (room.current_question_id) {
           const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
           const foundQ = activePool.find((q) => Number(q.id) === Number(room.current_question_id));
-          if (foundQ) setCurrentQuestion(foundQ);
+          if (foundQ) {
+            setCurrentQuestion(foundQ);
+          } else {
+            supabase.from('questions').select('*').eq('id', room.current_question_id).maybeSingle().then(({ data }) => {
+              if (data) setCurrentQuestion(data);
+            });
+          }
         } else {
           setCurrentQuestion(null);
           setQuestionStartedAt(null);
@@ -229,9 +240,8 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     return () => {
       clearInterval(pollInterval);
     };
-  }, [roomCodeUpper, fetchSubmissions, questions, questionStartedAt]);
+  }, [roomCodeUpper, fetchSubmissions, questions]);
 
-  // Countdown timer calculation
   useEffect(() => {
     if (!questionStartedAt) {
       setTimeLeft(60);
@@ -374,16 +384,24 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   };
 
   const toggleUnmask = async (spouse: 'wife' | 'husband') => {
-    if (!activeCouple) return;
+    if (!activeCouple || !activeSubmission) return;
 
     const field = spouse === 'wife' ? 'wife_unmasked' : 'husband_unmasked';
-    const currentVal = activeSubmission ? activeSubmission[field] : false;
+    const currentVal = activeSubmission[field] || false;
     const updatedValue = !currentVal;
 
-    if (activeSubmission) {
-      const updatedSub = { ...activeSubmission, [field]: updatedValue };
-      setSubmissionsMap((prev) => ({ ...prev, [activeCouple.id]: updatedSub }));
-      await supabase.from('submissions').update({ [field]: updatedValue }).eq('id', activeSubmission.id);
+    // 1. Optimistically update local state immediately
+    const updatedSub = { ...activeSubmission, [field]: updatedValue };
+    setSubmissionsMap((prev) => ({ ...prev, [activeCouple.id]: updatedSub }));
+
+    // 2. Push update to Supabase and immediately fetch fresh state to prevent poll flickering
+    const { error } = await supabase
+      .from('submissions')
+      .update({ [field]: updatedValue })
+      .eq('id', activeSubmission.id);
+
+    if (!error) {
+      await fetchSubmissions(currentRound);
     }
   };
 
