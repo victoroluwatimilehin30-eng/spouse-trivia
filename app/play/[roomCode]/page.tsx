@@ -50,25 +50,23 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const [roomError, setRoomError] = useState(false);
   const [couples, setCouples] = useState<any[]>([]);
 
-  // Registration states
-  const [teamName, setTeamName] = useState('');
-  const [role, setRole] = useState<'husband' | 'wife'>('husband');
-  const [myName, setMyName] = useState('');
-  
-  const [myCouple, setMyCouple] = useState<any>(() => {
+  // Selection states (Team & Role selection from host setup)
+  const [selectedCoupleId, setSelectedCoupleId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
-      return saved ? JSON.parse(saved) : null;
+      return localStorage.getItem(`player_couple_${roomCodeUpper}`) || '';
+    }
+    return '';
+  });
+
+  const [spouseType, setSpouseType] = useState<'wife' | 'husband' | null>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem(`player_spouse_${roomCodeUpper}`) as 'wife' | 'husband') || null;
     }
     return null;
   });
 
-  const [registered, setRegistered] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return !!localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
-    }
-    return false;
-  });
+  const [tempCoupleId, setTempCoupleId] = useState('');
+  const [tempSpouseType, setTempSpouseType] = useState<'wife' | 'husband' | null>(null);
 
   // Gameplay states
   const [questions, setQuestions] = useState<any[]>(FALLBACK_QUESTIONS);
@@ -85,7 +83,14 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   const [isRevealed, setIsRevealed] = useState(false);
   const [teamSubmissionsHistory, setTeamSubmissionsHistory] = useState<any[]>([]);
 
-  // Initialize room and user session
+  const handleSelectTeamAndRole = (coupleId: string, type: 'wife' | 'husband') => {
+    setSelectedCoupleId(coupleId);
+    setSpouseType(type);
+    localStorage.setItem(`player_couple_${roomCodeUpper}`, coupleId);
+    localStorage.setItem(`player_spouse_${roomCodeUpper}`, type);
+  };
+
+  // Initialize room and polling
   useEffect(() => {
     if (!roomCodeUpper) return;
 
@@ -150,14 +155,8 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
 
         if (couplesData) {
           setCouples(couplesData);
-          const savedCouple = localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
-          if (savedCouple) {
-            const parsed = JSON.parse(savedCouple);
-            const fresh = couplesData.find(c => c.id === parsed.id);
-            if (fresh) {
-              setMyCouple(fresh);
-              localStorage.setItem(`player_couple_obj_${roomCodeUpper}`, JSON.stringify(fresh));
-            }
+          if (!roomData.active_couple_id && couplesData.length > 0) {
+            setActiveCoupleId(couplesData[0].id);
           }
         }
       } catch (err) {
@@ -216,28 +215,18 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
 
           if (couplesData) {
             setCouples(couplesData);
-            const savedCouple = localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
-            if (savedCouple) {
-              const parsed = JSON.parse(savedCouple);
-              const fresh = couplesData.find(c => c.id === parsed.id);
-              if (fresh) {
-                setMyCouple(fresh);
-                localStorage.setItem(`player_couple_obj_${roomCodeUpper}`, JSON.stringify(fresh));
-              }
-            }
           }
         }
 
-        const savedCouple = localStorage.getItem(`player_couple_obj_${roomCodeUpper}`);
-        if (savedCouple) {
-          const parsed = JSON.parse(savedCouple);
-          const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
+        const currentCoupleId = localStorage.getItem(`player_couple_${roomCodeUpper}`);
+        const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
 
+        if (currentCoupleId) {
           const { data: allSubs } = await supabase
             .from('submissions')
             .select('*')
             .eq('room_code', roomCodeUpper)
-            .eq('couple_id', parsed.id);
+            .eq('couple_id', currentCoupleId);
 
           if (allSubs) {
             setTeamSubmissionsHistory(allSubs);
@@ -283,74 +272,17 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     return () => clearInterval(timerInterval);
   }, [questionStartedAt]);
 
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!teamName.trim() || !myName.trim() || !room) return;
-
-    const { data: existingTeam } = await supabase
-      .from('couples')
-      .select('*')
-      .eq('room_id', room.id)
-      .ilike('team_name', teamName.trim())
-      .maybeSingle();
-
-    if (existingTeam) {
-      const updatePayload: any = {};
-      if (role === 'husband') {
-        updatePayload.husband_name = myName.trim();
-      } else {
-        updatePayload.wife_name = myName.trim();
-      }
-
-      const { data: updated, error } = await supabase
-        .from('couples')
-        .update(updatePayload)
-        .eq('id', existingTeam.id)
-        .select()
-        .single();
-
-      if (!error && updated) {
-        setMyCouple(updated);
-        setRegistered(true);
-        localStorage.setItem(`player_couple_obj_${roomCodeUpper}`, JSON.stringify(updated));
-        localStorage.setItem(`player_spouse_${roomCodeUpper}`, role);
-      }
-    } else {
-      const newTeamPayload: any = {
-        room_id: room.id,
-        team_name: teamName.trim(),
-        total_score: 0,
-        husband_name: role === 'husband' ? myName.trim() : null,
-        wife_name: role === 'wife' ? myName.trim() : null,
-      };
-
-      const { data: created, error } = await supabase
-        .from('couples')
-        .insert(newTeamPayload)
-        .select()
-        .single();
-
-      if (!error && created) {
-        setMyCouple(created);
-        setRegistered(true);
-        localStorage.setItem(`player_couple_obj_${roomCodeUpper}`, JSON.stringify(created));
-        localStorage.setItem(`player_spouse_${roomCodeUpper}`, role);
-      }
-    }
-  };
-
   const handleSubmitAnswer = async (e: React.FormEvent) => {
     e.preventDefault();
-    const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
-    if (!answer.trim() || !currentSpouse || !myCouple || timeLeft <= 0) return;
+    if (!answer.trim() || !spouseType || !selectedCoupleId || timeLeft <= 0) return;
 
-    const updateField = currentSpouse === 'wife' ? 'wife_answer' : 'husband_answer';
+    const updateField = spouseType === 'wife' ? 'wife_answer' : 'husband_answer';
 
     const { data: existing } = await supabase
       .from('submissions')
       .select('id')
       .eq('room_code', roomCodeUpper)
-      .eq('couple_id', myCouple.id)
+      .eq('couple_id', selectedCoupleId)
       .eq('round_number', currentRound)
       .maybeSingle();
 
@@ -359,7 +291,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     } else {
       await supabase.from('submissions').insert({
         room_code: roomCodeUpper,
-        couple_id: myCouple.id,
+        couple_id: selectedCoupleId,
         round_number: currentRound,
         [updateField]: answer,
       });
@@ -386,7 +318,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
       .update({
         current_question_id: q.id,
         used_question_ids: newUsed,
-        active_couple_id: myCouple.id,
+        active_couple_id: selectedCoupleId,
         question_started_at: nowIso,
       })
       .eq('room_code', roomCodeUpper);
@@ -409,8 +341,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     return idx !== -1 ? idx + 1 : null;
   }, [currentQuestion, filteredQuestions]);
 
-  const currentSpouse = typeof window !== 'undefined' ? localStorage.getItem(`player_spouse_${roomCodeUpper}`) : null;
-  const isMyTurn = myCouple && activeCoupleId ? myCouple.id === activeCoupleId : true;
+  const isMyTurn = selectedCoupleId && activeCoupleId ? selectedCoupleId === activeCoupleId : true;
 
   if (loading) {
     return (
@@ -435,9 +366,93 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
   }
 
   // ==========================================
-  // STATE 1: PRE-GAME LOBBY (Room is waiting)
+  // STATE 1: TEAM & ROLE SELECTION (Lobby)
+  // ==========================================
+  if (!spouseType || !selectedCoupleId) {
+    return (
+      <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-6 font-sans">
+        <div className="bg-[#161412] border border-[#26231E] p-8 rounded-2xl max-w-sm w-full text-center space-y-6 shadow-2xl">
+          <div className="space-y-1">
+            <span className="text-[11px] uppercase tracking-widest text-[#D4C3A3] bg-[#26231E] px-3 py-1 rounded-full border border-[#302B25]">
+              Room: {roomCodeUpper}
+            </span>
+            <h1 className="text-xl font-serif text-[#F3EFE6] mt-2">Join Game Lobby</h1>
+            <p className="text-[#9E978E] text-xs">Select your team set up by the host.</p>
+          </div>
+
+          <div className="space-y-4 text-left">
+            <div>
+              <label className="block text-[11px] uppercase tracking-wider text-[#9E978E] mb-2">
+                1. Select Your Team
+              </label>
+              {couples.length > 0 ? (
+                <select
+                  value={tempCoupleId}
+                  onChange={(e) => setTempCoupleId(e.target.value)}
+                  className="w-full bg-[#0F0E0C] border border-[#26231E] text-xs text-[#F3EFE6] rounded-xl p-3 focus:outline-none focus:border-[#D4C3A3]"
+                >
+                  <option value="">-- Choose Team --</option>
+                  {couples.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.team_name} ({c.husband_name} & {c.wife_name})
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-xl text-center text-xs text-amber-400 animate-pulse">
+                  Waiting for host to add teams in setup...
+                </div>
+              )}
+            </div>
+
+            {tempCoupleId && (
+              <div>
+                <label className="block text-[11px] uppercase tracking-wider text-[#9E978E] mb-2">
+                  2. Who is holding this device?
+                </label>
+                <div className="grid grid-cols-2 gap-2 mb-4">
+                  <button
+                    type="button"
+                    onClick={() => setTempSpouseType('wife')}
+                    className={`py-3 rounded-xl font-medium text-xs border transition-all cursor-pointer ${
+                      tempSpouseType === 'wife' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#1C1A17] text-[#F3EFE6] border-[#302B25]'
+                    }`}
+                  >
+                    Wife
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTempSpouseType('husband')}
+                    className={`py-3 rounded-xl font-medium text-xs border transition-all cursor-pointer ${
+                      tempSpouseType === 'husband' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#1C1A17] text-[#F3EFE6] border-[#302B25]'
+                    }`}
+                  >
+                    Husband
+                  </button>
+                </div>
+
+                {tempSpouseType && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectTeamAndRole(tempCoupleId, tempSpouseType)}
+                    className="w-full bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold py-3 rounded-xl text-xs transition-all cursor-pointer shadow-md"
+                  >
+                    Enter Room Lobby
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // STATE 2: WAITING FOR HOST TO START
   // ==========================================
   if (room?.status === 'waiting') {
+    const assignedCouple = couples.find(c => c.id === selectedCoupleId);
     return (
       <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] p-6 flex flex-col items-center justify-center font-sans">
         <div className="max-w-md w-full bg-[#161412] border border-[#26231E] rounded-3xl p-8 space-y-6 shadow-2xl text-center">
@@ -445,101 +460,38 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
             <span className="text-[10px] font-mono uppercase tracking-widest text-[#D4C3A3] bg-[#26231E] px-3 py-1 rounded-full border border-[#302B25]">
               Room: {roomCodeUpper}
             </span>
-            <h1 className="text-2xl font-serif font-normal text-[#F3EFE6] mt-2">Couple Trivia Lobby</h1>
+            <h1 className="text-2xl font-serif font-normal text-[#F3EFE6] mt-2">Waiting Room</h1>
           </div>
 
-          {!registered ? (
-            <form onSubmit={handleRegister} className="space-y-4 text-left">
-              <div className="space-y-1">
-                <label className="text-[11px] uppercase tracking-wider text-[#9E978E] font-medium block">Team Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. The Smiths"
-                  value={teamName}
-                  onChange={(e) => setTeamName(e.target.value)}
-                  className="w-full bg-[#0F0E0C] border border-[#26231E] rounded-xl px-4 py-3 text-xs text-[#F3EFE6] focus:outline-none focus:border-[#D4C3A3]"
-                />
+          <div className="bg-[#0F0E0C] border border-[#26231E] p-6 rounded-2xl space-y-4 text-center">
+            <div className="flex items-center justify-center gap-1.5 text-[#D4C3A3]">
+              <Heart className="w-4 h-4 fill-current" />
+              <span className="text-xs font-semibold uppercase tracking-wider">Team: {assignedCouple?.team_name}</span>
+            </div>
+
+            <div className="space-y-2 text-xs border-t border-b border-[#26231E] py-3 text-left">
+              <div className="flex justify-between items-center">
+                <span className="text-[#9E978E]">Husband:</span>
+                <span className="font-semibold text-[#F3EFE6]">{assignedCouple?.husband_name}</span>
               </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] uppercase tracking-wider text-[#9E978E] font-medium block">I am joining as:</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setRole('husband')}
-                    className={`py-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${role === 'husband' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#0F0E0C] text-[#9E978E] border-[#26231E]'}`}
-                  >
-                    Husband
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setRole('wife')}
-                    className={`py-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${role === 'wife' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#0F0E0C] text-[#9E978E] border-[#26231E]'}`}
-                  >
-                    Wife
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[11px] uppercase tracking-wider text-[#9E978E] font-medium block">Your Name</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Enter your name"
-                  value={myName}
-                  onChange={(e) => setMyName(e.target.value)}
-                  className="w-full bg-[#0F0E0C] border border-[#26231E] rounded-xl px-4 py-3 text-xs text-[#F3EFE6] focus:outline-none focus:border-[#D4C3A3]"
-                />
-              </div>
-
-              <button
-                type="submit"
-                className="w-full bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold py-3.5 rounded-2xl text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer mt-2"
-              >
-                Join Room Lobby
-              </button>
-            </form>
-          ) : (
-            <div className="space-y-6 py-4">
-              <div className="bg-[#0F0E0C] border border-[#26231E] p-6 rounded-2xl space-y-4 text-center">
-                <div className="flex items-center justify-center gap-1.5 text-[#D4C3A3]">
-                  <Heart className="w-4 h-4 fill-current" />
-                  <span className="text-xs font-semibold uppercase tracking-wider">Team: {myCouple?.team_name}</span>
-                </div>
-
-                <div className="space-y-2 text-xs border-t border-b border-[#26231E] py-3 text-left">
-                  <div className="flex justify-between items-center">
-                    <span className="text-[#9E978E]">Husband:</span>
-                    <span className="font-semibold text-[#F3EFE6]">{myCouple?.husband_name || <span className="text-amber-400 italic font-normal">Waiting to join...</span>}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-[#9E978E]">Wife:</span>
-                    <span className="font-semibold text-[#F3EFE6]">{myCouple?.wife_name || <span className="text-amber-400 italic font-normal">Waiting to join...</span>}</span>
-                  </div>
-                </div>
-
-                {(!myCouple?.husband_name || !myCouple?.wife_name) ? (
-                  <div className="space-y-2 animate-pulse pt-2">
-                    <p className="text-xs text-amber-400 font-mono">Waiting for your partner to join this team...</p>
-                    <p className="text-[10px] text-[#9E978E]">Share this link with your partner so they can enter the exact same team name.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2 animate-pulse pt-2">
-                    <p className="text-xs text-[#86EFAC] font-mono">Team is complete! Waiting for host to start the game...</p>
-                  </div>
-                )}
+              <div className="flex justify-between items-center">
+                <span className="text-[#9E978E]">Wife:</span>
+                <span className="font-semibold text-[#F3EFE6]">{assignedCouple?.wife_name}</span>
               </div>
             </div>
-          )}
+
+            <div className="space-y-2 animate-pulse pt-2">
+              <p className="text-xs text-[#86EFAC] font-mono">You are logged in as <span className="uppercase font-bold">{spouseType}</span>.</p>
+              <p className="text-xs text-amber-400 font-mono">Waiting for Host to start game...</p>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
   // ==========================================
-  // STATE 2: ACTIVE GAMEPLAY VIEW
+  // STATE 3: ACTIVE GAMEPLAY & TURN-TAKING
   // ==========================================
   const renderLiveScoreboard = () => (
     <div className="bg-[#0F0E0C] border border-[#26231E] rounded-xl p-3.5 space-y-3 mt-4 text-left">
@@ -556,7 +508,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           <div
             key={c.id}
             className={`flex items-center justify-between p-2 rounded-lg text-xs ${
-              c.id === myCouple?.id ? 'bg-[#26231E] border border-[#D4C3A3]/30' : 'bg-[#161412]'
+              c.id === selectedCoupleId ? 'bg-[#26231E] border border-[#D4C3A3]/30' : 'bg-[#161412]'
             }`}
           >
             <span className="text-[#F3EFE6] truncate max-w-[180px]">
@@ -569,6 +521,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     </div>
   );
 
+  // If it is NOT this team's turn, show waiting for your turn screen
   if (!isMyTurn) {
     return (
       <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-4 font-sans">
@@ -577,12 +530,12 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
             <Clock className="w-4 h-4 animate-pulse" />
           </div>
           <div className="space-y-1">
-            <span className="text-[10px] font-mono uppercase text-[#6B645B] tracking-widest block">
-              In Sync - Round {currentRound}
+            <span className="text-[10px] font-mono uppercase text-[#D4C3A3] tracking-widest block">
+              Game Started! • Round {currentRound}
             </span>
-            <h2 className="text-lg font-serif text-[#F3EFE6]">Waiting for your Turn</h2>
+            <h2 className="text-lg font-serif text-[#F3EFE6]">Waiting for your turn</h2>
             <p className="text-xs text-[#9E978E] max-w-xs mx-auto leading-relaxed">
-              Another team is currently on stage answering their prompt. Please standby...
+              Another team is currently on stage playing. Please standby for your team's turn in Round {currentRound}...
             </p>
           </div>
           {renderLiveScoreboard()}
@@ -591,6 +544,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     );
   }
 
+  // If it IS this team's turn, show question selector or active answering view
   return (
     <div className="min-h-screen bg-[#0F0E0C] text-[#F3EFE6] flex items-center justify-center p-4 font-sans">
       <div className="bg-[#161412] border border-[#26231E] rounded-2xl p-6 max-w-md w-full space-y-5 shadow-2xl">
@@ -602,7 +556,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
             </span>
           </span>
           <span className="text-[10px] uppercase font-mono px-3 py-0.5 rounded-full bg-[#1C1A17] text-[#D4C3A3] border border-[#26231E]">
-            {currentSpouse || 'Player'}
+            {spouseType}
           </span>
         </div>
 
@@ -685,7 +639,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
           <div className="space-y-3 text-center">
             <div className="space-y-1">
               <span className="text-[10px] font-mono uppercase text-[#D4C3A3] tracking-widest block">
-                Your Team's Turn - Round {currentRound}
+                Your Team's Turn • Round {currentRound}
               </span>
               <h3 className="text-base font-serif text-[#F3EFE6]">Pick Next Question Number</h3>
               <p className="text-xs text-[#9E978E]">

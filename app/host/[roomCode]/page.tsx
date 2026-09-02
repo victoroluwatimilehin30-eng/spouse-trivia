@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock, Play, Users, RefreshCw } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock, Play, Users, RefreshCw, Trash2, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 const FALLBACK_QUESTIONS = [
@@ -46,6 +46,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const roomCodeUpper = resolvedParams?.roomCode ? resolvedParams.roomCode.toUpperCase() : '';
 
   const [roomStatus, setRoomStatus] = useState<string>('waiting');
+  const [roomId, setRoomId] = useState<string | null>(null);
   const [couples, setCouples] = useState<any[]>([]);
   const [activeCouple, setActiveCouple] = useState<any | null>(null);
   const [questions, setQuestions] = useState<any[]>(FALLBACK_QUESTIONS);
@@ -61,6 +62,11 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const [usedQuestionIds, setUsedQuestionIds] = useState<number[]>([]);
   const [submissionsMap, setSubmissionsMap] = useState<Record<string, any>>({});
   
+  // Host input form for adding couples
+  const [inputTeamName, setInputTeamName] = useState('');
+  const [inputHusbandName, setInputHusbandName] = useState('');
+  const [inputWifeName, setInputWifeName] = useState('');
+
   const [copied, setCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
 
@@ -124,6 +130,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       }
 
       if (room) {
+        setRoomId(room.id);
         setRoomStatus(room.status || 'waiting');
         activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
@@ -233,6 +240,35 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     navigator.clipboard.writeText(playerLink);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleAddCouple = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inputTeamName.trim() || !inputHusbandName.trim() || !inputWifeName.trim() || !roomId) return;
+
+    const { data: newCouple, error } = await supabase
+      .from('couples')
+      .insert({
+        room_id: roomId,
+        team_name: inputTeamName.trim(),
+        husband_name: inputHusbandName.trim(),
+        wife_name: inputWifeName.trim(),
+        total_score: 0,
+      })
+      .select()
+      .single();
+
+    if (!error && newCouple) {
+      setCouples([...couples, newCouple]);
+      setInputTeamName('');
+      setInputHusbandName('');
+      setInputWifeName('');
+    }
+  };
+
+  const handleDeleteCouple = async (coupleId: string) => {
+    await supabase.from('couples').delete().eq('id', coupleId);
+    setCouples(couples.filter(c => c.id !== coupleId));
   };
 
   const handleStartGame = async () => {
@@ -403,61 +439,101 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         <div className="max-w-2xl w-full bg-[#161412] border border-[#26231E] rounded-3xl p-8 space-y-8 shadow-2xl text-center">
           <div className="space-y-2">
             <span className="text-xs font-mono uppercase tracking-widest text-[#D4C3A3] bg-[#26231E] px-3 py-1 rounded-full border border-[#302B25]">
-              Pre-Game Waiting Lobby
+              Pre-Game Setup & Waiting Lobby
             </span>
             <h1 className="text-3xl font-serif font-normal text-[#F3EFE6]">Room Code: {roomCodeUpper}</h1>
             <p className="text-xs text-[#9E978E]">
-              Players can scan the QR code or use the link below to join and register their teams.
+              Add participating teams below, then share the player link or QR code with your couples.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-4 bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl">
             <button
               onClick={handleCopyPlayerLink}
-              className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-sm"
+              className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-sm cursor-pointer"
             >
               {copied ? <Check className="w-4 h-4 text-[#86EFAC]" /> : <Copy className="w-4 h-4" />}
               {copied ? 'Link Copied!' : 'Copy Player Link'}
             </button>
             <button
               onClick={() => setShowQrModal(true)}
-              className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-sm"
+              className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-4 py-2 rounded-xl flex items-center gap-2 transition-all shadow-sm cursor-pointer"
             >
               <QrCode className="w-4 h-4" /> Show QR Code
             </button>
           </div>
 
+          {/* Add Couple Form */}
+          <form onSubmit={handleAddCouple} className="bg-[#0F0E0C] border border-[#26231E] p-5 rounded-2xl space-y-4 text-left">
+            <h2 className="text-xs uppercase font-mono tracking-wider text-[#D4C3A3]">Add Participating Couple</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <input
+                type="text"
+                required
+                placeholder="Team Name (e.g. The Smiths)"
+                value={inputTeamName}
+                onChange={(e) => setInputTeamName(e.target.value)}
+                className="bg-[#161412] border border-[#26231E] rounded-xl px-3 py-2 text-xs text-[#F3EFE6] focus:outline-none focus:border-[#D4C3A3]"
+              />
+              <input
+                type="text"
+                required
+                placeholder="Husband's Name"
+                value={inputHusbandName}
+                onChange={(e) => setInputHusbandName(e.target.value)}
+                className="bg-[#161412] border border-[#26231E] rounded-xl px-3 py-2 text-xs text-[#F3EFE6] focus:outline-none focus:border-[#D4C3A3]"
+              />
+              <input
+                type="text"
+                required
+                placeholder="Wife's Name"
+                value={inputWifeName}
+                onChange={(e) => setInputWifeName(e.target.value)}
+                className="bg-[#161412] border border-[#26231E] rounded-xl px-3 py-2 text-xs text-[#F3EFE6] focus:outline-none focus:border-[#D4C3A3]"
+              />
+            </div>
+            <button
+              type="submit"
+              className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] font-semibold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer"
+            >
+              <Plus className="w-4 h-4" /> Add Team to Room
+            </button>
+          </form>
+
           <div className="space-y-3 text-left">
             <div className="flex items-center justify-between border-b border-[#26231E] pb-2">
               <span className="text-xs font-mono uppercase tracking-wider text-[#9E978E] flex items-center gap-2">
-                <Users className="w-4 h-4 text-[#D4C3A3]" /> Connected Couples ({couples.length})
+                <Users className="w-4 h-4 text-[#D4C3A3]" /> Registered Teams ({couples.length})
               </span>
             </div>
             {couples.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[220px] overflow-y-auto pr-1">
-                {couples.map((c, i) => {
-                  const isComplete = c.husband_name && c.wife_name;
-                  return (
-                    <div key={c.id} className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl flex items-center justify-between">
-                      <div>
-                        <span className="text-xs font-semibold text-[#F3EFE6] block">
-                          {i + 1}. Team: {c.team_name}
-                        </span>
-                        <span className="text-[11px] text-[#9E978E] block mt-0.5">
-                          Husband: {c.husband_name || '(Waiting...)'}
-                        </span>
-                        <span className="text-[11px] text-[#9E978E] block">
-                          Wife: {c.wife_name || '(Waiting...)'}
-                        </span>
-                      </div>
-                      <span className={`w-2.5 h-2.5 rounded-full ${isComplete ? 'bg-[#86EFAC]' : 'bg-amber-400 animate-pulse'}`} title={isComplete ? 'Ready' : 'Waiting for partner'} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[200px] overflow-y-auto pr-1">
+                {couples.map((c, i) => (
+                  <div key={c.id} className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-semibold text-[#F3EFE6] block">
+                        {i + 1}. {c.team_name}
+                      </span>
+                      <span className="text-[11px] text-[#9E978E] block mt-0.5">
+                        Husband: {c.husband_name}
+                      </span>
+                      <span className="text-[11px] text-[#9E978E] block">
+                        Wife: {c.wife_name}
+                      </span>
                     </div>
-                  );
-                })}
+                    <button
+                      onClick={() => handleDeleteCouple(c.id)}
+                      className="text-[#6B645B] hover:text-red-400 p-1.5 transition-colors cursor-pointer"
+                      title="Remove team"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
               </div>
             ) : (
-              <div className="bg-[#0F0E0C] border border-[#26231E] p-8 rounded-2xl text-center space-y-2">
-                <p className="text-xs text-[#9E978E] animate-pulse">Waiting for couples to join from their phones...</p>
+              <div className="bg-[#0F0E0C] border border-[#26231E] p-6 rounded-2xl text-center">
+                <p className="text-xs text-[#9E978E]">No teams added yet. Add couples above before starting the game.</p>
               </div>
             )}
           </div>
@@ -474,14 +550,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         {showQrModal && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
             <div className="bg-[#161412] border border-[#26231E] rounded-3xl p-8 max-w-sm w-full text-center space-y-6 shadow-2xl relative">
-              <button onClick={() => setShowQrModal(false)} className="absolute top-4 right-4 bg-[#1C1A17] text-[#9E978E] hover:text-[#F3EFE6] p-2 rounded-full">
+              <button onClick={() => setShowQrModal(false)} className="absolute top-4 right-4 bg-[#1C1A17] text-[#9E978E] hover:text-[#F3EFE6] p-2 rounded-full cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
               <h2 className="text-xl font-serif text-[#F3EFE6]">Scan to Join Lobby</h2>
               <div className="bg-white p-4 rounded-2xl inline-block shadow-lg">
                 <img src={`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(playerLink)}`} alt="QR" className="w-48 h-48 mx-auto" />
               </div>
-              <button onClick={handleCopyPlayerLink} className="w-full bg-[#F3EFE6] text-[#0F0E0C] font-semibold py-3 rounded-xl text-xs">
+              <button onClick={handleCopyPlayerLink} className="w-full bg-[#F3EFE6] text-[#0F0E0C] font-semibold py-3 rounded-xl text-xs cursor-pointer">
                 Copy Player Link
               </button>
             </div>
@@ -507,7 +583,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
               </div>
               <div className="flex flex-wrap items-center gap-2.5 mt-1">
                 <h1 className="text-xl font-mono tracking-wider font-semibold text-[#F3EFE6]">{roomCodeUpper}</h1>
-                <button onClick={handleCopyPlayerLink} className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                <button onClick={handleCopyPlayerLink} className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] text-xs font-medium px-3 py-1.5 rounded-xl flex items-center gap-1.5 cursor-pointer">
                   {copied ? <Check className="w-3.5 h-3.5 text-[#86EFAC]" /> : <Copy className="w-3.5 h-3.5" />} {copied ? 'Link Copied!' : 'Copy Link'}
                 </button>
               </div>
@@ -685,7 +761,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
                     </div>
                     <span className="text-sm font-mono font-semibold text-[#D4C3A3]">{couple.total_score} pts</span>
                   </div>
-                  <p className="text-[11px] text-[#6B645B]">{couple.husband_name || '?'} & {couple.wife_name || '?'}</p>
+                  <p className="text-[11px] text-[#6B645B]">{couple.husband_name} & {couple.wife_name}</p>
                 </div>
               );
             })}
