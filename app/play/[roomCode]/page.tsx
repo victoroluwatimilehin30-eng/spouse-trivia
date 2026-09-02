@@ -3,7 +3,7 @@
 import { useState, useEffect, use, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye, Layers, Edit3, Heart, Users } from 'lucide-react';
+import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye, Layers, Edit3, Heart } from 'lucide-react';
 
 const FALLBACK_QUESTIONS = [
   { id: 1, category: 'Habits', question_text: 'What is your spouse absolute favorite comfort food?' },
@@ -368,6 +368,30 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
     setIsSubmitted(true);
   };
 
+  const handlePlayerPickQuestion = async (q: any) => {
+    if (!isMyTurn || usedQuestionIds.includes(q.id)) return;
+
+    const newUsed = [...usedQuestionIds, q.id];
+    const nowIso = new Date().toISOString();
+    setCurrentQuestion(q);
+    setUsedQuestionIds(newUsed);
+    setQuestionStartedAt(nowIso);
+    setTimeLeft(60);
+    setIsSubmitted(false);
+    setAnswer('');
+    setIsRevealed(false);
+
+    await supabase
+      .from('rooms')
+      .update({
+        current_question_id: q.id,
+        used_question_ids: newUsed,
+        active_couple_id: myCouple.id,
+        question_started_at: nowIso,
+      })
+      .eq('room_code', roomCodeUpper);
+  };
+
   const filteredQuestions = useMemo(() => {
     const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
     if (selectedCategories.includes('All') || selectedCategories.length === 0) {
@@ -444,14 +468,14 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                   <button
                     type="button"
                     onClick={() => setRole('husband')}
-                    className={`py-2.5 rounded-xl text-xs font-semibold border transition-all ${role === 'husband' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#0F0E0C] text-[#9E978E] border-[#26231E]'}`}
+                    className={`py-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${role === 'husband' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#0F0E0C] text-[#9E978E] border-[#26231E]'}`}
                   >
                     Husband
                   </button>
                   <button
                     type="button"
                     onClick={() => setRole('wife')}
-                    className={`py-2.5 rounded-xl text-xs font-semibold border transition-all ${role === 'wife' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#0F0E0C] text-[#9E978E] border-[#26231E]'}`}
+                    className={`py-2.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${role === 'wife' ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : 'bg-[#0F0E0C] text-[#9E978E] border-[#26231E]'}`}
                   >
                     Wife
                   </button>
@@ -625,7 +649,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
 
                 <button
                   type="submit"
-                  className="w-full bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold py-3 rounded-full text-xs flex items-center justify-center gap-2 transition-all shadow-md"
+                  className="w-full bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold py-3 rounded-full text-xs flex items-center justify-center gap-2 transition-all shadow-md cursor-pointer"
                 >
                   <Send className="w-3.5 h-3.5" /> Submit & Lock Answer ({timeLeft}s left)
                 </button>
@@ -649,7 +673,7 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
                   <button
                     type="button"
                     onClick={() => setIsSubmitted(false)}
-                    className="text-xs text-[#D4C3A3] hover:underline flex items-center justify-center gap-1 mx-auto font-mono pt-1"
+                    className="text-xs text-[#D4C3A3] hover:underline flex items-center justify-center gap-1 mx-auto font-mono pt-1 cursor-pointer"
                   >
                     <Edit3 className="w-3.5 h-3.5" /> Edit Answer ({timeLeft}s remaining)
                   </button>
@@ -663,10 +687,31 @@ export default function PlayerPage({ params }: { params: Promise<{ roomCode: str
               <span className="text-[10px] font-mono uppercase text-[#D4C3A3] tracking-widest block">
                 Your Team's Turn - Round {currentRound}
               </span>
-              <h3 className="text-base font-serif text-[#F3EFE6]">Waiting for Host to start game</h3>
+              <h3 className="text-base font-serif text-[#F3EFE6]">Pick Next Question Number</h3>
               <p className="text-xs text-[#9E978E]">
-                The host is getting the question ready. Stand by...
+                Tap any available question number to start the 60-second timer for both partners
               </p>
+            </div>
+
+            <div className="grid grid-cols-5 gap-2 max-h-[160px] overflow-y-auto pr-1 pt-1">
+              {filteredQuestions.map((q, idx) => {
+                const isUsed = usedQuestionIds.includes(q.id);
+                return (
+                  <button
+                    key={q.id}
+                    type="button"
+                    onClick={() => handlePlayerPickQuestion(q)}
+                    disabled={isUsed}
+                    className={`py-2.5 rounded-xl text-xs font-mono font-semibold border transition-all cursor-pointer ${
+                      isUsed
+                        ? 'bg-[#0F0E0C] text-[#38332C] border-[#1C1A17] cursor-not-allowed line-through'
+                        : 'bg-[#1C1A17] text-[#F3EFE6] border-[#26231E] hover:border-[#D4C3A3] active:scale-95'
+                    }`}
+                  >
+                    Q{idx + 1}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
