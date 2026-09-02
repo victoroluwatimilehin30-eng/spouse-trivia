@@ -3,7 +3,7 @@
 import { useState, useEffect, use, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye, Layers } from 'lucide-react';
+import { Lock, Send, Check, AlertCircle, Clock, Trophy, Eye, Layers, Edit3 } from 'lucide-react';
 
 const FALLBACK_QUESTIONS = [
   { id: 1, category: 'Habits', question_text: 'What is your spouse absolute favorite comfort food?' },
@@ -76,6 +76,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
   const [isRevealed, setIsRevealed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [roomError, setRoomError] = useState(false);
+  const [teamSubmissionsHistory, setTeamSubmissionsHistory] = useState<any[]>([]);
 
   const handleSelectTeamAndRole = (coupleId: string, type: 'wife' | 'husband') => {
     setSelectedCoupleId(coupleId);
@@ -89,7 +90,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
     let pollInterval: any;
 
-    // Safety timeout so loading screen never hangs forever
     const safetyTimer = setTimeout(() => {
       setLoading(false);
     }, 3000);
@@ -156,7 +156,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
     initRoom();
 
-    // Polling every 1 second to keep room state, questions, and couples fully stable
     pollInterval = setInterval(async () => {
       try {
         const { data: room } = await supabase
@@ -204,19 +203,40 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         const currentCoupleId = localStorage.getItem(`player_couple_${roomCodeUpper}`);
         const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
 
-        if (currentCoupleId && currentSpouse) {
-          const { data: sub } = await supabase
+        if (currentCoupleId) {
+          // Fetch submission history for this couple across all rounds
+          const { data: allSubs } = await supabase
             .from('submissions')
             .select('*')
             .eq('room_code', roomCodeUpper)
-            .eq('couple_id', currentCoupleId)
-            .eq('round_number', currentRound)
-            .maybeSingle();
+            .eq('couple_id', currentCoupleId);
 
-          if (sub) {
-            const maskField = currentSpouse === 'wife' ? 'wife_unmasked' : 'husband_unmasked';
-            if (sub[maskField] !== undefined) {
-              setIsRevealed(sub[maskField]);
+          if (allSubs) {
+            setTeamSubmissionsHistory(allSubs);
+            const currentSub = allSubs.find(s => Number(s.round_number) === Number(currentRound));
+            if (currentSub) {
+              const myField = currentSpouse === 'wife' ? 'wife_answer' : 'husband_answer';
+              if (currentSub[myField] && !answer && !isSubmitted) {
+                setAnswer(currentSub[myField]);
+                setIsSubmitted(true);
+              }
+            }
+          }
+
+          if (currentSpouse) {
+            const { data: sub } = await supabase
+              .from('submissions')
+              .select('*')
+              .eq('room_code', roomCodeUpper)
+              .eq('couple_id', currentCoupleId)
+              .eq('round_number', currentRound)
+              .maybeSingle();
+
+            if (sub) {
+              const maskField = currentSpouse === 'wife' ? 'wife_unmasked' : 'husband_unmasked';
+              if (sub[maskField] !== undefined) {
+                setIsRevealed(sub[maskField]);
+              }
             }
           }
         }
@@ -229,7 +249,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       clearTimeout(safetyTimer);
       clearInterval(pollInterval);
     };
-  }, [roomCodeUpper, router, currentRound, questions]);
+  }, [roomCodeUpper, router, currentRound, questions, answer, isSubmitted]);
 
   const filteredQuestions = useMemo(() => {
     const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
@@ -245,6 +265,13 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     const baseToUse = matched.length > 0 ? matched : activePool;
     return getShuffledQuestions(baseToUse, roomCodeUpper);
   }, [questions, selectedCategories, roomCodeUpper]);
+
+  // Compute question number for the active question
+  const currentQuestionNumber = useMemo(() => {
+    if (!currentQuestion) return null;
+    const idx = filteredQuestions.findIndex(q => Number(q.id) === Number(currentQuestion.id));
+    return idx !== -1 ? idx + 1 : null;
+  }, [currentQuestion, filteredQuestions]);
 
   const isMyTurn = selectedCoupleId && activeCoupleId ? selectedCoupleId === activeCoupleId : true;
 
@@ -402,7 +429,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
   }
 
   const renderLiveScoreboard = () => (
-    <div className="bg-[#0F0E0C] border border-[#26231E] rounded-xl p-3.5 space-y-2 mt-4 text-left">
+    <div className="bg-[#0F0E0C] border border-[#26231E] rounded-xl p-3.5 space-y-3 mt-4 text-left">
       <div className="flex items-center justify-between border-b border-[#26231E] pb-2">
         <span className="text-[10px] uppercase font-mono tracking-wider text-[#9E978E] flex items-center gap-1.5">
           <Trophy className="w-3 h-3 text-[#D4C3A3]" /> Live Standings
@@ -411,7 +438,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           <Layers className="w-3 h-3" /> Round {currentRound}
         </span>
       </div>
-      <div className="space-y-1.5 max-h-[120px] overflow-y-auto pr-1">
+      <div className="space-y-1.5 max-h-[100px] overflow-y-auto pr-1">
         {couples.map((c, idx) => (
           <div
             key={c.id}
@@ -426,6 +453,25 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           </div>
         ))}
       </div>
+
+      {/* Team Answer History Log */}
+      {teamSubmissionsHistory.length > 0 && (
+        <div className="border-t border-[#26231E] pt-2 space-y-1">
+          <span className="text-[9px] uppercase font-mono tracking-wider text-[#9E978E] block">
+            Your Team's Answer History:
+          </span>
+          <div className="space-y-1 max-h-[80px] overflow-y-auto">
+            {teamSubmissionsHistory.map((sub) => (
+              <div key={sub.id} className="text-[11px] font-mono bg-[#161412] p-1.5 rounded border border-[#26231E] flex justify-between items-center">
+                <span className="text-[#D4C3A3]">R{sub.round_number}</span>
+                <span className="text-[#F3EFE6] truncate max-w-[180px]">
+                  {spouseType === 'wife' ? sub.wife_answer || '(No answer)' : sub.husband_answer || '(No answer)'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -469,10 +515,15 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
         {currentQuestion ? (
           <>
-            <div className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-xl space-y-1 text-center">
-              <span className="text-[10px] uppercase font-mono tracking-widest text-[#D4C3A3] block">
-                Current Question ({currentQuestion.category})
-              </span>
+            <div className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-xl space-y-1.5 text-center">
+              <div className="flex items-center justify-center gap-2">
+                <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-[#D4C3A3] text-[#0F0E0C] font-bold">
+                  Q{currentQuestionNumber || '?'}
+                </span>
+                <span className="text-[10px] uppercase font-mono tracking-widest text-[#D4C3A3]">
+                  {currentQuestion.category}
+                </span>
+              </div>
               <p className="text-sm font-serif text-[#F3EFE6] leading-relaxed">
                 "{currentQuestion.question_text}"
               </p>
@@ -514,6 +565,13 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
                     {answer}
                   </p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSubmitted(false)}
+                  className="text-xs text-[#D4C3A3] hover:underline flex items-center justify-center gap-1 mx-auto font-mono pt-1"
+                >
+                  <Edit3 className="w-3 h-3" /> Edit Answer
+                </button>
               </div>
             )}
           </>
