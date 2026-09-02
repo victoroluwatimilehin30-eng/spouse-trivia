@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock, Play, Users, RefreshCw, Trash2, Plus, User } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock, Play, Users, RefreshCw, Trash2, Plus } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 const FALLBACK_QUESTIONS = [
@@ -45,6 +45,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const router = useRouter();
   const roomCodeUpper = resolvedParams?.roomCode ? resolvedParams.roomCode.toUpperCase() : '';
 
+  // Always start strictly in the waiting lobby on initial load
   const [roomStatus, setRoomStatus] = useState<string>('waiting');
   const [roomId, setRoomId] = useState<string | null>(null);
   const [couples, setCouples] = useState<any[]>([]);
@@ -123,7 +124,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
       if (room && isMounted) {
         setRoomId(room.id);
-        setRoomStatus(room.status || 'waiting');
         const activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
 
@@ -155,6 +155,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     fetchGameData();
 
+    // Polling interval (syncs data without forcing host out of the lobby)
     const pollInterval = setInterval(async () => {
       if (!isMounted) return;
       await fetchSubmissionsData(currentRoundRef.current);
@@ -166,8 +167,8 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .maybeSingle();
 
       if (room && isMounted) {
-        if (room.status) {
-          setRoomStatus(room.status);
+        if (room.status === 'GAME_OVER') {
+          setRoomStatus('GAME_OVER');
         }
 
         if (room.current_round && room.current_round !== currentRoundRef.current) {
@@ -514,7 +515,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[220px] overflow-y-auto pr-1">
                 {couples.map((c, i) => {
                   const sub = submissionsMap[c.id];
-                  // Independent check if husband or wife has submitted/joined
                   const husbandJoined = sub && sub.husband_answer !== undefined && sub.husband_answer !== null;
                   const wifeJoined = sub && sub.wife_answer !== undefined && sub.wife_answer !== null;
 
@@ -534,14 +534,12 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
                       </div>
 
                       <div className="space-y-1.5 text-[11px] border-t border-[#26231E] pt-2">
-                        {/* Husband Indicator */}
                         <div className="flex items-center justify-between">
                           <span className="text-[#9E978E]">Husband: {c.husband_name}</span>
                           <span className={`px-2 py-0.5 rounded text-[9px] font-mono border ${husbandJoined ? 'bg-[#1C231B] text-[#86EFAC] border-[#273B25]' : 'bg-[#1C1A17] text-[#6B645B] border-[#26231E]'}`}>
                             {husbandJoined ? 'Connected' : 'Waiting'}
                           </span>
                         </div>
-                        {/* Wife Indicator */}
                         <div className="flex items-center justify-between">
                           <span className="text-[#9E978E]">Wife: {c.wife_name}</span>
                           <span className={`px-2 py-0.5 rounded text-[9px] font-mono border ${wifeJoined ? 'bg-[#1C231B] text-[#86EFAC] border-[#273B25]' : 'bg-[#1C1A17] text-[#6B645B] border-[#26231E]'}`}>
