@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 const FALLBACK_QUESTIONS = [
@@ -55,6 +55,8 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   currentRoundRef.current = currentRound;
 
   const [currentQuestion, setCurrentQuestion] = useState<any | null>(null);
+  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number>(60);
   const [usedQuestionIds, setUsedQuestionIds] = useState<number[]>([]);
   const [submissionsMap, setSubmissionsMap] = useState<Record<string, any>>({});
   
@@ -130,6 +132,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           setSelectedCategories(room.selected_category.split(','));
         }
         if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
+        if (room.question_started_at) setQuestionStartedAt(room.question_started_at);
 
         let { data: couplesData } = await supabase
           .from('couples')
@@ -191,12 +194,17 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           setSubmissionsMap({});
         }
 
+        if (room.question_started_at !== questionStartedAt) {
+          setQuestionStartedAt(room.question_started_at);
+        }
+
         if (room.current_question_id) {
           const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
           const foundQ = activePool.find((q) => Number(q.id) === Number(room.current_question_id));
           if (foundQ) setCurrentQuestion(foundQ);
         } else {
           setCurrentQuestion(null);
+          setQuestionStartedAt(null);
         }
 
         if (room.used_question_ids) {
@@ -221,7 +229,25 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     return () => {
       clearInterval(pollInterval);
     };
-  }, [roomCodeUpper, fetchSubmissions, questions]);
+  }, [roomCodeUpper, fetchSubmissions, questions, questionStartedAt]);
+
+  // Countdown timer calculation
+  useEffect(() => {
+    if (!questionStartedAt) {
+      setTimeLeft(60);
+      return;
+    }
+
+    const timerInterval = setInterval(() => {
+      const startTime = new Date(questionStartedAt).getTime();
+      const now = Date.now();
+      const elapsedSeconds = Math.floor((now - startTime) / 1000);
+      const remaining = Math.max(0, 60 - elapsedSeconds);
+      setTimeLeft(remaining);
+    }, 500);
+
+    return () => clearInterval(timerInterval);
+  }, [questionStartedAt]);
 
   const playerLink = typeof window !== 'undefined' ? `${window.location.origin}/play/${roomCodeUpper}` : '';
 
@@ -241,16 +267,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
   const activeSubmission = activeCouple ? submissionsMap[activeCouple.id] : null;
 
-  const canProceedToNextTeam = useMemo(() => {
-    if (!activeSubmission) return true;
-    const hasAnswers = activeSubmission.wife_answer || activeSubmission.husband_answer;
-    if (!hasAnswers) return true;
-
-    const wifeMarked = activeSubmission.wife_score !== null && activeSubmission.wife_score !== undefined;
-    const husbandMarked = activeSubmission.husband_score !== null && activeSubmission.husband_score !== undefined;
-    return wifeMarked && husbandMarked;
-  }, [activeSubmission]);
-
   const handleNextTeam = async () => {
     if (couples.length === 0) return;
 
@@ -260,12 +276,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
     setActiveCouple(nextCouple);
     setCurrentQuestion(null);
+    setQuestionStartedAt(null);
 
     await supabase
       .from('rooms')
       .update({
         active_couple_id: nextCouple.id,
         current_question_id: null,
+        question_started_at: null,
       })
       .eq('room_code', roomCodeUpper);
   };
@@ -284,12 +302,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     setCurrentRound(nextRound);
     setSubmissionsMap({});
     setCurrentQuestion(null);
+    setQuestionStartedAt(null);
 
     await supabase
       .from('rooms')
       .update({
         current_round: nextRound,
         current_question_id: null,
+        question_started_at: null,
       })
       .eq('room_code', roomCodeUpper);
   };
@@ -318,7 +338,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     return getShuffledQuestions(baseToUse, roomCodeUpper);
   }, [questions, selectedCategories, roomCodeUpper]);
 
-  // Determine the display number (Q1, Q2...) for the currently active question
   const currentQuestionNumber = useMemo(() => {
     if (!currentQuestion) return null;
     const idx = filteredQuestions.findIndex(q => Number(q.id) === Number(currentQuestion.id));
@@ -329,23 +348,28 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     if (usedQuestionIds.includes(q.id)) return;
 
     const newUsed = [...usedQuestionIds, q.id];
+    const nowIso = new Date().toISOString();
     setCurrentQuestion(q);
     setUsedQuestionIds(newUsed);
+    setQuestionStartedAt(nowIso);
+    setTimeLeft(60);
 
     await supabase
       .from('rooms')
       .update({
         current_question_id: q.id,
         used_question_ids: newUsed,
+        question_started_at: nowIso,
       })
       .eq('room_code', roomCodeUpper);
   };
 
   const handleClearQuestion = async () => {
     setCurrentQuestion(null);
+    setQuestionStartedAt(null);
     await supabase
       .from('rooms')
-      .update({ current_question_id: null })
+      .update({ current_question_id: null, question_started_at: null })
       .eq('room_code', roomCodeUpper);
   };
 
@@ -370,7 +394,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     const currentSpouseScore = Number(activeSubmission[scoreField] || 0);
     const scoreDiff = points - currentSpouseScore;
 
-    // Optimistic local state update for instant UI feedback
     const updatedSub = { ...activeSubmission, [scoreField]: points };
     setSubmissionsMap((prev) => ({ ...prev, [activeCouple.id]: updatedSub }));
 
@@ -380,7 +403,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     );
     setActiveCouple((prev: any) => (prev ? { ...prev, total_score: newTotal } : prev));
 
-    // Execute database writes asynchronously without blocking UI
     await supabase.from('submissions').update({ [scoreField]: points }).eq('id', activeSubmission.id);
     await supabase.from('couples').update({ total_score: newTotal }).eq('id', activeCouple.id);
   };
@@ -428,9 +450,13 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           </button>
         </div>
 
-        <div className="bg-[#161412] border border-[#26231E] p-8 rounded-2xl text-center space-y-3 min-h-[160px] flex flex-col justify-center items-center">
+        <div className="bg-[#161412] border border-[#26231E] p-8 rounded-2xl text-center space-y-3 min-h-[160px] flex flex-col justify-center items-center relative">
           {currentQuestion ? (
             <>
+              <div className="absolute top-4 right-4 flex items-center gap-1.5 bg-[#1C1A17] border border-[#302B25] px-3 py-1 rounded-full text-xs font-mono text-[#D4C3A3]">
+                <Clock className="w-3.5 h-3.5 animate-pulse text-[#D4C3A3]" />
+                <span>{timeLeft}s remaining</span>
+              </div>
               <div className="flex items-center justify-center gap-2">
                 <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-[#D4C3A3] text-[#0F0E0C] font-bold">
                   Q{currentQuestionNumber || '?'}
@@ -746,7 +772,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
 
       {showQrModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#161412] border border-[#26231E] rounded-3xl p-8 max-w-sm w-full text-center space-y-6 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-[#161412] border border-[#26231E] rounded-3xl p-8 max-w-sm w-full text-center space-y-6 shadow-2xl relative">
             <button
               onClick={() => setShowQrModal(false)}
               className="absolute top-4 right-4 bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#9E978E] hover:text-[#F3EFE6] p-2 rounded-full transition-all"

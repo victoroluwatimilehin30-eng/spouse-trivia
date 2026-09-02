@@ -68,6 +68,8 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All']);
   const [currentRound, setCurrentRound] = useState<number>(1);
   const [currentQuestion, setCurrentQuestion] = useState<any | null>(null);
+  const [questionStartedAt, setQuestionStartedAt] = useState<string | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number>(60);
   const [usedQuestionIds, setUsedQuestionIds] = useState<number[]>([]);
   const [activeCoupleId, setActiveCoupleId] = useState<string | null>(null);
 
@@ -129,6 +131,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         if (room.selected_category) setSelectedCategories(room.selected_category.split(','));
         if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
         if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
+        if (room.question_started_at) setQuestionStartedAt(room.question_started_at);
 
         if (room.current_question_id) {
           const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
@@ -180,6 +183,9 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           if (room.selected_category) setSelectedCategories(room.selected_category.split(','));
           if (room.used_question_ids) setUsedQuestionIds(room.used_question_ids);
           if (room.active_couple_id) setActiveCoupleId(room.active_couple_id);
+          if (room.question_started_at !== questionStartedAt) {
+            setQuestionStartedAt(room.question_started_at);
+          }
 
           if (room.current_question_id) {
             const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
@@ -187,6 +193,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
             if (q) setCurrentQuestion(q);
           } else {
             setCurrentQuestion(null);
+            setQuestionStartedAt(null);
           }
 
           const { data: couplesData } = await supabase
@@ -204,7 +211,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         const currentSpouse = localStorage.getItem(`player_spouse_${roomCodeUpper}`);
 
         if (currentCoupleId) {
-          // Fetch submission history for this couple across all rounds
           const { data: allSubs } = await supabase
             .from('submissions')
             .select('*')
@@ -214,7 +220,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
           if (allSubs) {
             setTeamSubmissionsHistory(allSubs);
             const currentSub = allSubs.find(s => Number(s.round_number) === Number(currentRound));
-            if (currentSub) {
+            if (currentSub && currentSpouse) {
               const myField = currentSpouse === 'wife' ? 'wife_answer' : 'husband_answer';
               if (currentSub[myField] && !answer && !isSubmitted) {
                 setAnswer(currentSub[myField]);
@@ -249,7 +255,25 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
       clearTimeout(safetyTimer);
       clearInterval(pollInterval);
     };
-  }, [roomCodeUpper, router, currentRound, questions, answer, isSubmitted]);
+  }, [roomCodeUpper, router, currentRound, questions, answer, isSubmitted, questionStartedAt]);
+
+  // Live countdown timer handler for players
+  useEffect(() => {
+    if (!questionStartedAt) {
+      setTimeLeft(60);
+      return;
+    }
+
+    const timerInterval = setInterval(() => {
+      const startTime = new Date(questionStartedAt).getTime();
+      const now = Date.now();
+      const elapsedSeconds = Math.floor((now - startTime) / 1000);
+      const remaining = Math.max(0, 60 - elapsedSeconds);
+      setTimeLeft(remaining);
+    }, 500);
+
+    return () => clearInterval(timerInterval);
+  }, [questionStartedAt]);
 
   const filteredQuestions = useMemo(() => {
     const activePool = questions.length > 0 ? questions : FALLBACK_QUESTIONS;
@@ -266,7 +290,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     return getShuffledQuestions(baseToUse, roomCodeUpper);
   }, [questions, selectedCategories, roomCodeUpper]);
 
-  // Compute question number for the active question
   const currentQuestionNumber = useMemo(() => {
     if (!currentQuestion) return null;
     const idx = filteredQuestions.findIndex(q => Number(q.id) === Number(currentQuestion.id));
@@ -279,8 +302,11 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
     if (!isMyTurn || usedQuestionIds.includes(q.id)) return;
 
     const newUsed = [...usedQuestionIds, q.id];
+    const nowIso = new Date().toISOString();
     setCurrentQuestion(q);
     setUsedQuestionIds(newUsed);
+    setQuestionStartedAt(nowIso);
+    setTimeLeft(60);
     setIsSubmitted(false);
     setAnswer('');
     setIsRevealed(false);
@@ -291,13 +317,14 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         current_question_id: q.id,
         used_question_ids: newUsed,
         active_couple_id: selectedCoupleId,
+        question_started_at: nowIso,
       })
       .eq('room_code', roomCodeUpper);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!answer.trim() || !spouseType || !selectedCoupleId) return;
+    if (!answer.trim() || !spouseType || !selectedCoupleId || timeLeft <= 0) return;
 
     const updateField = spouseType === 'wife' ? 'wife_answer' : 'husband_answer';
 
@@ -454,7 +481,6 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
         ))}
       </div>
 
-      {/* Team Answer History Log */}
       {teamSubmissionsHistory.length > 0 && (
         <div className="border-t border-[#26231E] pt-2 space-y-1">
           <span className="text-[9px] uppercase font-mono tracking-wider text-[#9E978E] block">
@@ -515,24 +541,35 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
 
         {currentQuestion ? (
           <>
-            <div className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-xl space-y-1.5 text-center">
-              <div className="flex items-center justify-center gap-2">
-                <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-[#D4C3A3] text-[#0F0E0C] font-bold">
-                  Q{currentQuestionNumber || '?'}
-                </span>
-                <span className="text-[10px] uppercase font-mono tracking-widest text-[#D4C3A3]">
-                  {currentQuestion.category}
-                </span>
+            <div className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-xl space-y-1.5 text-center relative">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono px-2.5 py-0.5 rounded-full bg-[#D4C3A3] text-[#0F0E0C] font-bold">
+                    Q{currentQuestionNumber || '?'}
+                  </span>
+                  <span className="text-[10px] uppercase font-mono tracking-widest text-[#D4C3A3]">
+                    {currentQuestion.category}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 text-xs font-mono text-[#D4C3A3]">
+                  <Clock className="w-3.5 h-3.5 animate-pulse" />
+                  <span>{timeLeft}s</span>
+                </div>
               </div>
-              <p className="text-sm font-serif text-[#F3EFE6] leading-relaxed">
+              <p className="text-sm font-serif text-[#F3EFE6] leading-relaxed pt-2">
                 "{currentQuestion.question_text}"
               </p>
             </div>
 
-            {!isSubmitted ? (
+            {timeLeft === 0 && !isSubmitted ? (
+              <div className="py-4 text-center space-y-2 bg-[#281A1A] border border-[#EF4444]/40 rounded-xl">
+                <p className="text-xs font-mono text-[#EF4444] uppercase tracking-wider font-semibold">Time's Up!</p>
+                <p className="text-xs text-[#9E978E]">The 60-second countdown has expired. Waiting for host grading.</p>
+              </div>
+            ) : !isSubmitted ? (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="block text-xs font-medium text-[#9E978E]">Your Answer:</label>
+                  <label className="block text-xs font-medium text-[#9E978E]">Your Answer (Editable until timer ends):</label>
                   <textarea
                     value={answer}
                     onChange={(e) => setAnswer(e.target.value)}
@@ -547,7 +584,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
                   type="submit"
                   className="w-full bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold py-3 rounded-full text-xs flex items-center justify-center gap-2 transition-all shadow-md"
                 >
-                  <Send className="w-3.5 h-3.5" /> Submit & Lock Answer
+                  <Send className="w-3.5 h-3.5" /> Submit & Lock Answer ({timeLeft}s left)
                 </button>
               </form>
             ) : (
@@ -565,13 +602,15 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
                     {answer}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsSubmitted(false)}
-                  className="text-xs text-[#D4C3A3] hover:underline flex items-center justify-center gap-1 mx-auto font-mono pt-1"
-                >
-                  <Edit3 className="w-3 h-3" /> Edit Answer
-                </button>
+                {timeLeft > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setIsSubmitted(false)}
+                    className="text-xs text-[#D4C3A3] hover:underline flex items-center justify-center gap-1 mx-auto font-mono pt-1"
+                  >
+                    <Edit3 className="w-3.5 h-3.5" /> Edit Answer ({timeLeft}s remaining)
+                  </button>
+                )}
               </div>
             )}
           </>
@@ -583,7 +622,7 @@ export default function PlayerInput({ params }: { params: Promise<{ roomCode: st
               </span>
               <h3 className="text-base font-serif text-[#F3EFE6]">Pick Next Question Number</h3>
               <p className="text-xs text-[#9E978E]">
-                Tap any available question number to select it for both partners
+                Tap any available question number to start the 60-second timer for both partners
               </p>
             </div>
 
