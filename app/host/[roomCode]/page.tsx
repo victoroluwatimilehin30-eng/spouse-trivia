@@ -69,31 +69,32 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const [copied, setCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
 
-  const fetchSubmissions = useCallback(async (roundNum: number) => {
-    if (!roomCodeUpper) return;
-    const { data: subData } = await supabase
-      .from('submissions')
-      .select('*')
-      .ilike('room_code', roomCodeUpper)
-      .eq('round_number', roundNum);
-
-    if (subData) {
-      const map: Record<string, any> = {};
-      subData.forEach((sub) => {
-        if (sub.couple_id) {
-          map[sub.couple_id] = sub;
-        }
-      });
-      setSubmissionsMap(map);
-    } else {
-      setSubmissionsMap({});
-    }
-  }, [roomCodeUpper]);
-
+  // Main data fetch & polling effect
   useEffect(() => {
     if (!roomCodeUpper) return;
 
-    let activeRoundNum = currentRoundRef.current;
+    let isMounted = true;
+
+    const fetchSubmissionsData = async (roundNum: number) => {
+      const { data: subData } = await supabase
+        .from('submissions')
+        .select('*')
+        .ilike('room_code', roomCodeUpper)
+        .eq('round_number', roundNum);
+
+      if (!isMounted) return;
+      if (subData) {
+        const map: Record<string, any> = {};
+        subData.forEach((sub) => {
+          if (sub.couple_id) {
+            map[sub.couple_id] = sub;
+          }
+        });
+        setSubmissionsMap(map);
+      } else {
+        setSubmissionsMap({});
+      }
+    };
 
     const fetchGameData = async () => {
       const { data: qData } = await supabase
@@ -101,6 +102,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .select('*')
         .order('id', { ascending: true });
 
+      if (!isMounted) return;
       const activeList = qData && qData.length > 0 ? qData : FALLBACK_QUESTIONS;
       setQuestions(activeList);
 
@@ -120,10 +122,10 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         room = newRoom;
       }
 
-      if (room) {
+      if (room && isMounted) {
         setRoomId(room.id);
         setRoomStatus(room.status || 'waiting');
-        activeRoundNum = room.current_round || 1;
+        const activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
 
         if (room.selected_category) {
@@ -137,26 +139,26 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           if (foundQ) setCurrentQuestion(foundQ);
         }
 
-        let { data: couplesData } = await supabase
+        const { data: couplesData } = await supabase
           .from('couples')
           .select('*')
           .eq('room_id', room.id);
 
-        if (couplesData && couplesData.length > 0) {
+        if (couplesData && isMounted) {
           setCouples(couplesData);
           const currentActive = couplesData.find((c) => c.id === room.active_couple_id) || couplesData[0];
           setActiveCouple(currentActive);
         }
-      }
 
-      await fetchSubmissions(activeRoundNum);
+        await fetchSubmissionsData(activeRoundNum);
+      }
     };
 
     fetchGameData();
 
     const pollInterval = setInterval(async () => {
-      if (!roomCodeUpper) return;
-      await fetchSubmissions(currentRoundRef.current);
+      if (!isMounted) return;
+      await fetchSubmissionsData(currentRoundRef.current);
 
       const { data: room } = await supabase
         .from('rooms')
@@ -164,7 +166,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .ilike('room_code', roomCodeUpper)
         .maybeSingle();
 
-      if (room) {
+      if (room && isMounted) {
         if (room.status) {
           setRoomStatus(room.status);
         }
@@ -195,7 +197,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             .select('*')
             .eq('room_id', room.id);
 
-          if (couplesData) {
+          if (couplesData && isMounted) {
             setCouples(couplesData);
             if (room.active_couple_id) {
               const foundCouple = couplesData.find((c) => c.id === room.active_couple_id);
@@ -208,8 +210,11 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       }
     }, 1000);
 
-    return () => clearInterval(pollInterval);
-  }, [roomCodeUpper, questions, activeCouple, questionStartedAt, fetchSubmissions]);
+    return () => {
+      isMounted = false;
+      clearInterval(pollInterval);
+    };
+  }, [roomCodeUpper]); // Stable dependency array
 
   useEffect(() => {
     if (!questionStartedAt) {
@@ -273,7 +278,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     setActiveCouple(firstCouple);
     setRoomStatus('active');
 
-    // Bulletproof update using room_code
     const { error } = await supabase
       .from('rooms')
       .update({
@@ -509,37 +513,33 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             </div>
             {couples.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[200px] overflow-y-auto pr-1">
-                {couples.map((c, i) => {
-                  const sub = submissionsMap[c.id];
-                  const hasJoined = sub !== undefined || c.husband_name || c.wife_name;
-                  return (
-                    <div key={c.id} className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl flex items-center justify-between">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold text-[#F3EFE6]">
-                            {i + 1}. {c.team_name}
-                          </span>
-                          <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-[#1C231B] text-[#86EFAC] border border-[#273B25]">
-                            Ready in Lobby
-                          </span>
-                        </div>
-                        <span className="text-[11px] text-[#9E978E] block">
-                          Husband: {c.husband_name}
+                {couples.map((c, i) => (
+                  <div key={c.id} className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl flex items-center justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-[#F3EFE6]">
+                          {i + 1}. {c.team_name}
                         </span>
-                        <span className="text-[11px] text-[#9E978E] block">
-                          Wife: {c.wife_name}
+                        <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-[#1C231B] text-[#86EFAC] border border-[#273B25]">
+                          Ready in Lobby
                         </span>
                       </div>
-                      <button
-                        onClick={() => handleDeleteCouple(c.id)}
-                        className="text-[#6B645B] hover:text-red-400 p-1.5 transition-colors cursor-pointer"
-                        title="Remove team"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <span className="text-[11px] text-[#9E978E] block">
+                        Husband: {c.husband_name}
+                      </span>
+                      <span className="text-[11px] text-[#9E978E] block">
+                        Wife: {c.wife_name}
+                      </span>
                     </div>
-                  );
-                })}
+                    <button
+                      onClick={() => handleDeleteCouple(c.id)}
+                      className="text-[#6B645B] hover:text-red-400 p-1.5 transition-colors cursor-pointer"
+                      title="Remove team"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="bg-[#0F0E0C] border border-[#26231E] p-6 rounded-2xl text-center">
