@@ -115,17 +115,16 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         if (newRoom) {
           room = newRoom;
         }
-      } else {
-        // Force room to start in waiting mode when host dashboard loads
+      } else if (room.status !== 'active' && room.status !== 'GAME_OVER') {
         await supabase
           .from('rooms')
           .update({ status: 'waiting' })
-          .eq('id', room.id);
+          .eq('room_code', roomCodeUpper);
         room.status = 'waiting';
       }
 
       if (room) {
-        setRoomStatus('waiting');
+        setRoomStatus(room.status || 'waiting');
         activeRoundNum = room.current_round || 1;
         setCurrentRound(activeRoundNum);
 
@@ -167,9 +166,8 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
         .maybeSingle();
 
       if (room) {
-        // Only update roomStatus from polling if it's active, allowing the host's "Start Game" click to trigger the transition
-        if (room.status === 'active') {
-          setRoomStatus('active');
+        if (room.status) {
+          setRoomStatus(room.status);
         }
 
         if (room.current_round && room.current_round !== currentRoundRef.current) {
@@ -243,16 +241,13 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
     setActiveCouple(firstCouple);
     setRoomStatus('active');
 
-    const { data: room } = await supabase.from('rooms').select('id').eq('room_code', roomCodeUpper).maybeSingle();
-    if (room) {
-      await supabase
-        .from('rooms')
-        .update({
-          status: 'active',
-          active_couple_id: firstCouple.id,
-        })
-        .eq('id', room.id);
-    }
+    await supabase
+      .from('rooms')
+      .update({
+        status: 'active',
+        active_couple_id: firstCouple.id,
+      })
+      .eq('room_code', roomCodeUpper);
   };
 
   const handleResetToLobby = async () => {
@@ -521,12 +516,12 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           <div className="flex items-center gap-2">
             <button
               onClick={handleResetToLobby}
-              className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] font-semibold px-3 py-2 rounded-full text-xs flex items-center gap-1.5 transition-all shadow-sm"
+              className="bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] font-semibold px-3 py-2 rounded-full text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer"
               title="Return to waiting lobby"
             >
               <RefreshCw className="w-3.5 h-3.5" /> Back to Lobby
             </button>
-            <button onClick={handleEndGameAttempt} className="bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold px-4 py-2 rounded-full text-xs flex items-center gap-2">
+            <button onClick={handleEndGameAttempt} className="bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold px-4 py-2 rounded-full text-xs flex items-center gap-2 cursor-pointer">
               <Trophy className="w-3.5 h-3.5" /> End Match & Results
             </button>
           </div>
@@ -544,7 +539,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
                 <span className="text-[11px] font-mono uppercase tracking-widest text-[#D4C3A3]">{currentQuestion.category} - Round {currentRound}</span>
               </div>
               <h2 className="text-2xl sm:text-3xl font-serif text-[#F3EFE6] leading-relaxed max-w-2xl font-normal">"{currentQuestion.question_text}"</h2>
-              <button onClick={handleClearQuestion} className="mt-2 text-xs text-[#9E978E] hover:text-[#F3EFE6] flex items-center gap-1 font-mono">
+              <button onClick={handleClearQuestion} className="mt-2 text-xs text-[#9E978E] hover:text-[#F3EFE6] flex items-center gap-1 font-mono cursor-pointer">
                 <RotateCcw className="w-3 h-3" /> Clear & Select New Question
               </button>
             </>
@@ -573,7 +568,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
                   key={q.id}
                   onClick={() => handlePickQuestion(q)}
                   disabled={isUsed}
-                  className={`py-2 rounded-xl text-xs font-mono font-semibold transition-all border ${
+                  className={`py-2 rounded-xl text-xs font-mono font-semibold transition-all border cursor-pointer ${
                     isActive ? 'bg-[#D4C3A3] text-[#0F0E0C] border-[#D4C3A3]' : isUsed ? 'bg-[#0F0E0C] text-[#38332C] border-[#1C1A17] cursor-not-allowed line-through' : 'bg-[#1C1A17] text-[#F3EFE6] border border-[#26231E] hover:border-[#D4C3A3]'
                   }`}
                 >
@@ -594,11 +589,11 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
           </div>
           <div className="flex items-center gap-2">
             {isRoundComplete ? (
-              <button onClick={handleAdvanceRound} className="bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md animate-pulse">
+              <button onClick={handleAdvanceRound} className="bg-[#D4C3A3] hover:bg-[#E2DDD0] text-[#0F0E0C] font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-md animate-pulse cursor-pointer">
                 <Layers className="w-3.5 h-3.5" /> Start Round {currentRound + 1}
               </button>
             ) : (
-              <button onClick={handleNextTeam} className="font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C]">
+              <button onClick={handleNextTeam} className="font-semibold px-4 py-2 rounded-xl text-xs flex items-center gap-1.5 transition-all shadow-sm bg-[#F3EFE6] hover:bg-[#E2DDD0] text-[#0F0E0C] cursor-pointer">
                 Next Team <SkipForward className="w-3.5 h-3.5" />
               </button>
             )}
@@ -621,14 +616,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
               {activeSubmission?.wife_unmasked ? <p className="text-xl font-serif text-[#F3EFE6]">{activeSubmission.wife_answer}</p> : <p className="text-[#6B645B] text-xs italic flex items-center gap-2"><EyeOff className="w-4 h-4" /> Hidden</p>}
             </div>
             <div className="space-y-2">
-              <button onClick={() => toggleUnmask('wife')} disabled={!activeSubmission?.wife_answer} className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#26231E] disabled:opacity-40 text-[#F3EFE6] font-medium py-2 rounded-xl text-xs flex items-center justify-center gap-2">
+              <button onClick={() => toggleUnmask('wife')} disabled={!activeSubmission?.wife_answer} className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#26231E] disabled:opacity-40 text-[#F3EFE6] font-medium py-2 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer">
                 {activeSubmission?.wife_unmasked ? <><EyeOff className="w-3.5 h-3.5" /> Hide</> : <><Eye className="w-3.5 h-3.5" /> Reveal</>}
               </button>
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => awardPoints('wife', 5)} disabled={!activeSubmission?.wife_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 ${activeSubmission?.wife_score === 5 ? 'bg-[#D4C3A3] text-[#0F0E0C]' : 'bg-[#F3EFE6] text-[#0F0E0C] disabled:opacity-40'}`}>
+                <button onClick={() => awardPoints('wife', 5)} disabled={!activeSubmission?.wife_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 cursor-pointer ${activeSubmission?.wife_score === 5 ? 'bg-[#D4C3A3] text-[#0F0E0C]' : 'bg-[#F3EFE6] text-[#0F0E0C] disabled:opacity-40'}`}>
                   <Check className="w-3.5 h-3.5" /> Match (+5)
                 </button>
-                <button onClick={() => awardPoints('wife', 0)} disabled={!activeSubmission?.wife_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 border ${activeSubmission?.wife_score === 0 && activeSubmission?.wife_unmasked ? 'bg-[#281A1A] border-[#EF4444] text-[#EF4444]' : 'bg-[#1C1A17] text-[#9E978E] border-[#26231E] disabled:opacity-40'}`}>
+                <button onClick={() => awardPoints('wife', 0)} disabled={!activeSubmission?.wife_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 border cursor-pointer ${activeSubmission?.wife_score === 0 && activeSubmission?.wife_unmasked ? 'bg-[#281A1A] border-[#EF4444] text-[#EF4444]' : 'bg-[#1C1A17] text-[#9E978E] border-[#26231E] disabled:opacity-40'}`}>
                   <X className="w-3.5 h-3.5" /> Miss (0)
                 </button>
               </div>
@@ -650,14 +645,14 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
               {activeSubmission?.husband_unmasked ? <p className="text-xl font-serif text-[#F3EFE6]">{activeSubmission.husband_answer}</p> : <p className="text-[#6B645B] text-xs italic flex items-center gap-2"><EyeOff className="w-4 h-4" /> Hidden</p>}
             </div>
             <div className="space-y-2">
-              <button onClick={() => toggleUnmask('husband')} disabled={!activeSubmission?.husband_answer} className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#26231E] disabled:opacity-40 text-[#F3EFE6] font-medium py-2 rounded-xl text-xs flex items-center justify-center gap-2">
+              <button onClick={() => toggleUnmask('husband')} disabled={!activeSubmission?.husband_answer} className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#26231E] disabled:opacity-40 text-[#F3EFE6] font-medium py-2 rounded-xl text-xs flex items-center justify-center gap-2 cursor-pointer">
                 {activeSubmission?.husband_unmasked ? <><EyeOff className="w-3.5 h-3.5" /> Hide</> : <><Eye className="w-3.5 h-3.5" /> Reveal</>}
               </button>
               <div className="grid grid-cols-2 gap-2">
-                <button onClick={() => awardPoints('husband', 5)} disabled={!activeSubmission?.husband_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 ${activeSubmission?.husband_score === 5 ? 'bg-[#D4C3A3] text-[#0F0E0C]' : 'bg-[#F3EFE6] text-[#0F0E0C] disabled:opacity-40'}`}>
+                <button onClick={() => awardPoints('husband', 5)} disabled={!activeSubmission?.husband_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 cursor-pointer ${activeSubmission?.husband_score === 5 ? 'bg-[#D4C3A3] text-[#0F0E0C]' : 'bg-[#F3EFE6] text-[#0F0E0C] disabled:opacity-40'}`}>
                   <Check className="w-3.5 h-3.5" /> Match (+5)
                 </button>
-                <button onClick={() => awardPoints('husband', 0)} disabled={!activeSubmission?.husband_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 border ${activeSubmission?.husband_score === 0 && activeSubmission?.husband_unmasked ? 'bg-[#281A1A] border-[#EF4444] text-[#EF4444]' : 'bg-[#1C1A17] text-[#9E978E] border-[#26231E] disabled:opacity-40'}`}>
+                <button onClick={() => awardPoints('husband', 0)} disabled={!activeSubmission?.husband_answer} className={`py-2 rounded-xl font-semibold text-xs flex items-center justify-center gap-1 border cursor-pointer ${activeSubmission?.husband_score === 0 && activeSubmission?.husband_unmasked ? 'bg-[#281A1A] border-[#EF4444] text-[#EF4444]' : 'bg-[#1C1A17] text-[#9E978E] border-[#26231E] disabled:opacity-40'}`}>
                   <X className="w-3.5 h-3.5" /> Miss (0)
                 </button>
               </div>
@@ -696,7 +691,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
             })}
           </div>
         </div>
-        <button onClick={handleEndGameAttempt} className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] font-semibold py-3.5 rounded-full text-xs flex items-center justify-center gap-2">
+        <button onClick={handleEndGameAttempt} className="w-full bg-[#1C1A17] hover:bg-[#282420] border border-[#302B25] text-[#D4C3A3] font-semibold py-3.5 rounded-full text-xs flex items-center justify-center gap-2 cursor-pointer">
           <Flag className="w-3.5 h-3.5" /> Finish Game & Declare Winner
         </button>
       </div>
