@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock, Play, Users, RefreshCw, Trash2, Plus } from 'lucide-react';
+import { Eye, EyeOff, Check, X, Trophy, Grid, RotateCcw, Flag, UserCheck, SkipForward, Copy, QrCode, Layers, Clock, Play, Users, RefreshCw, Trash2, Plus, User } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 const FALLBACK_QUESTIONS = [
@@ -69,7 +69,6 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
   const [copied, setCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
 
-  // Main data fetch & polling effect
   useEffect(() => {
     if (!roomCodeUpper) return;
 
@@ -214,7 +213,7 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
       isMounted = false;
       clearInterval(pollInterval);
     };
-  }, [roomCodeUpper]); // Stable dependency array
+  }, [roomCodeUpper]);
 
   useEffect(() => {
     if (!questionStartedAt) {
@@ -512,34 +511,47 @@ export default function HostDashboard({ params }: { params: Promise<{ roomCode: 
               </span>
             </div>
             {couples.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[200px] overflow-y-auto pr-1">
-                {couples.map((c, i) => (
-                  <div key={c.id} className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl flex items-center justify-between">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[220px] overflow-y-auto pr-1">
+                {couples.map((c, i) => {
+                  const sub = submissionsMap[c.id];
+                  // Independent check if husband or wife has submitted/joined
+                  const husbandJoined = sub && sub.husband_answer !== undefined && sub.husband_answer !== null;
+                  const wifeJoined = sub && sub.wife_answer !== undefined && sub.wife_answer !== null;
+
+                  return (
+                    <div key={c.id} className="bg-[#0F0E0C] border border-[#26231E] p-4 rounded-2xl flex flex-col justify-between space-y-3">
+                      <div className="flex items-center justify-between">
                         <span className="text-xs font-semibold text-[#F3EFE6]">
                           {i + 1}. {c.team_name}
                         </span>
-                        <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-[#1C231B] text-[#86EFAC] border border-[#273B25]">
-                          Ready in Lobby
-                        </span>
+                        <button
+                          onClick={() => handleDeleteCouple(c.id)}
+                          className="text-[#6B645B] hover:text-red-400 p-1 transition-colors cursor-pointer"
+                          title="Remove team"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
-                      <span className="text-[11px] text-[#9E978E] block">
-                        Husband: {c.husband_name}
-                      </span>
-                      <span className="text-[11px] text-[#9E978E] block">
-                        Wife: {c.wife_name}
-                      </span>
+
+                      <div className="space-y-1.5 text-[11px] border-t border-[#26231E] pt-2">
+                        {/* Husband Indicator */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-[#9E978E]">Husband: {c.husband_name}</span>
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-mono border ${husbandJoined ? 'bg-[#1C231B] text-[#86EFAC] border-[#273B25]' : 'bg-[#1C1A17] text-[#6B645B] border-[#26231E]'}`}>
+                            {husbandJoined ? 'Connected' : 'Waiting'}
+                          </span>
+                        </div>
+                        {/* Wife Indicator */}
+                        <div className="flex items-center justify-between">
+                          <span className="text-[#9E978E]">Wife: {c.wife_name}</span>
+                          <span className={`px-2 py-0.5 rounded text-[9px] font-mono border ${wifeJoined ? 'bg-[#1C231B] text-[#86EFAC] border-[#273B25]' : 'bg-[#1C1A17] text-[#6B645B] border-[#26231E]'}`}>
+                            {wifeJoined ? 'Connected' : 'Waiting'}
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => handleDeleteCouple(c.id)}
-                      className="text-[#6B645B] hover:text-red-400 p-1.5 transition-colors cursor-pointer"
-                      title="Remove team"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="bg-[#0F0E0C] border border-[#26231E] p-6 rounded-2xl text-center">
